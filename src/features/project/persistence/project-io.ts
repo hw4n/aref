@@ -213,7 +213,6 @@ export async function saveAutosaveProject(project: Project, currentProjectPath: 
   const request: SaveAutosaveRequest = {
     currentProjectPath,
     project,
-    assetSources: await createAssetSourcePayload(project),
   };
 
   return invoke<void>("save_autosave_project", { request });

@@ -16,7 +16,8 @@ const PROJECT_SCHEMA_VERSION: u32 = 2;
 const RECENT_PROJECTS_VERSION: u32 = 1;
 const RECENT_PROJECTS_FILENAME: &str = "recent-projects.json";
 const AUTOSAVE_DIRECTORY: &str = "autosave";
-const AUTOSAVE_PROJECT_FILENAME: &str = "current.aref";
+const AUTOSAVE_PROJECT_FILENAME: &str = "current.json";
+const LEGACY_AUTOSAVE_PROJECT_FILENAME: &str = "current.aref";
 const AUTOSAVE_SESSION_FILENAME: &str = "session.json";
 const MANAGED_IMPORT_DIRECTORY: &str = "managed-imports";
 const PROJECT_CACHE_DIRECTORY: &str = "opened-projects";
@@ -59,7 +60,6 @@ pub struct SaveProjectRequest {
 pub struct SaveAutosaveRequest {
     current_project_path: Option<String>,
     project: RuntimeProject,
-    asset_sources: Vec<ProjectAssetSourcePayload>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -399,6 +399,12 @@ fn autosave_project_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(directory.join(AUTOSAVE_PROJECT_FILENAME))
 }
 
+fn legacy_autosave_project_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let directory = app_local_data_dir(app)?.join(AUTOSAVE_DIRECTORY);
+    fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+    Ok(directory.join(LEGACY_AUTOSAVE_PROJECT_FILENAME))
+}
+
 fn autosave_session_path(app: &AppHandle) -> Result<PathBuf, String> {
     let directory = app_local_data_dir(app)?.join(AUTOSAVE_DIRECTORY);
     fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
@@ -570,9 +576,15 @@ fn reset_directory(path: &Path) -> Result<(), String> {
     fs::create_dir_all(path).map_err(|error| error.to_string())
 }
 
-fn archive_file_options() -> SimpleFileOptions {
+fn archive_metadata_file_options() -> SimpleFileOptions {
     SimpleFileOptions::default()
         .compression_method(CompressionMethod::Deflated)
+        .unix_permissions(0o644)
+}
+
+fn archive_asset_file_options() -> SimpleFileOptions {
+    SimpleFileOptions::default()
+        .compression_method(CompressionMethod::Stored)
         .unix_permissions(0o644)
 }
 
@@ -596,9 +608,10 @@ fn write_bytes_to_archive<W: Write + std::io::Seek>(
     writer: &mut ZipWriter<W>,
     archive_path: &str,
     bytes: &[u8],
+    options: SimpleFileOptions,
 ) -> Result<(), String> {
     writer
-        .start_file(archive_path, archive_file_options())
+        .start_file(archive_path, options)
         .map_err(|error| error.to_string())?;
     writer.write_all(bytes).map_err(|error| error.to_string())
 }
@@ -829,7 +842,52 @@ fn write_project_file_to_path(
         });
     }
 
-    let persisted_project = PersistedProjectFile {
+    let persisted_project = persisted_project_file(project, persisted_assets);
+
+    let file = fs::File::create(project_path).map_err(|error| error.to_string())?;
+    let mut archive = ZipWriter::new(file);
+
+    for asset in project.assets.values() {
+        let asset_source = asset_source_map
+            .get(&asset.id)
+            .ok_or_else(|| format!("Missing asset save payload for {}", asset.id))?;
+        let image_bytes = read_asset_source_bytes(&asset_source.image)?;
+        write_bytes_to_archive(
+            &mut archive,
+            &archive_asset_path(&asset.id, &asset_source.image),
+            &image_bytes,
+            archive_asset_file_options(),
+        )?;
+
+        if let Some(thumbnail_source) = &asset_source.thumbnail {
+            let thumbnail_bytes = read_asset_source_bytes(thumbnail_source)?;
+            write_bytes_to_archive(
+                &mut archive,
+                &archive_asset_path(&format!("{}-thumb", asset.id), thumbnail_source),
+                &thumbnail_bytes,
+                archive_asset_file_options(),
+            )?;
+        }
+    }
+
+    let contents =
+        serde_json::to_vec_pretty(&persisted_project).map_err(|error| error.to_string())?;
+    write_bytes_to_archive(
+        &mut archive,
+        PROJECT_ARCHIVE_METADATA_ENTRY,
+        &contents,
+        archive_metadata_file_options(),
+    )?;
+    archive.finish().map_err(|error| error.to_string())?;
+    cleanup_legacy_sidecar_directory(project_path);
+    Ok(())
+}
+
+fn persisted_project_file(
+    project: &RuntimeProject,
+    persisted_assets: Vec<PersistedAssetItem>,
+) -> PersistedProjectFile {
+    PersistedProjectFile {
         schema: PROJECT_SCHEMA.to_string(),
         schema_version: PROJECT_SCHEMA_VERSION,
         app_version: project.version.clone(),
@@ -850,38 +908,46 @@ fn write_project_file_to_path(
             },
             jobs: project.jobs.values().cloned().collect(),
         },
-    };
-
-    let file = fs::File::create(project_path).map_err(|error| error.to_string())?;
-    let mut archive = ZipWriter::new(file);
-
-    for asset in project.assets.values() {
-        let asset_source = asset_source_map
-            .get(&asset.id)
-            .ok_or_else(|| format!("Missing asset save payload for {}", asset.id))?;
-        let image_bytes = read_asset_source_bytes(&asset_source.image)?;
-        write_bytes_to_archive(
-            &mut archive,
-            &archive_asset_path(&asset.id, &asset_source.image),
-            &image_bytes,
-        )?;
-
-        if let Some(thumbnail_source) = &asset_source.thumbnail {
-            let thumbnail_bytes = read_asset_source_bytes(thumbnail_source)?;
-            write_bytes_to_archive(
-                &mut archive,
-                &archive_asset_path(&format!("{}-thumb", asset.id), thumbnail_source),
-                &thumbnail_bytes,
-            )?;
-        }
     }
+}
 
+fn persisted_assets_from_runtime_paths(project: &RuntimeProject) -> Vec<PersistedAssetItem> {
+    project
+        .assets
+        .values()
+        .map(|asset| PersistedAssetItem {
+            id: asset.id.clone(),
+            kind: asset.kind.clone(),
+            image_path: asset.image_path.clone(),
+            source_name: asset.source_name.clone(),
+            thumbnail_path: asset.thumbnail_path.clone(),
+            width: asset.width,
+            height: asset.height,
+            x: asset.x,
+            y: asset.y,
+            rotation: asset.rotation,
+            scale: asset.scale,
+            z_index: asset.z_index,
+            locked: asset.locked,
+            hidden: asset.hidden,
+            tags: asset.tags.clone(),
+            created_at: asset.created_at.clone(),
+            updated_at: asset.updated_at.clone(),
+            generation: asset.generation.clone(),
+        })
+        .collect()
+}
+
+fn write_autosave_project_to_path(
+    project_path: &Path,
+    project: &RuntimeProject,
+) -> Result<(), String> {
+    ensure_parent_directory(project_path)?;
+    let persisted_project =
+        persisted_project_file(project, persisted_assets_from_runtime_paths(project));
     let contents =
         serde_json::to_vec_pretty(&persisted_project).map_err(|error| error.to_string())?;
-    write_bytes_to_archive(&mut archive, PROJECT_ARCHIVE_METADATA_ENTRY, &contents)?;
-    archive.finish().map_err(|error| error.to_string())?;
-    cleanup_legacy_sidecar_directory(project_path);
-    Ok(())
+    fs::write(project_path, contents).map_err(|error| error.to_string())
 }
 
 fn load_project_file_internal(
@@ -960,13 +1026,18 @@ pub fn save_project_file(
 #[tauri::command]
 pub fn save_autosave_project(app: AppHandle, request: SaveAutosaveRequest) -> Result<(), String> {
     let project_path = autosave_project_path(&app)?;
-    write_project_file_to_path(&project_path, &request.project, &request.asset_sources)?;
+    write_autosave_project_to_path(&project_path, &request.project)?;
+    let legacy_project_path = legacy_autosave_project_path(&app)?;
+    if legacy_project_path.exists() {
+        let _ = fs::remove_file(legacy_project_path);
+    }
     write_session_file(&app, request.current_project_path.as_deref())
 }
 
 #[tauri::command]
 pub fn load_startup_project(app: AppHandle) -> Result<Option<ProjectPersistenceHandle>, String> {
     let autosave_path = autosave_project_path(&app)?;
+    let legacy_autosave_path = legacy_autosave_project_path(&app)?;
     let session_path = autosave_session_path(&app)?;
     let current_project_path = if session_path.exists() {
         let contents = fs::read_to_string(session_path).map_err(|error| error.to_string())?;
@@ -977,9 +1048,14 @@ pub fn load_startup_project(app: AppHandle) -> Result<Option<ProjectPersistenceH
         None
     };
     let recent_projects = read_recent_projects_file(&app)?;
+    let startup_autosave_path = if autosave_path.exists() {
+        autosave_path
+    } else {
+        legacy_autosave_path
+    };
     let startup_source = resolve_startup_project_source(
-        autosave_path.exists(),
-        &autosave_path,
+        startup_autosave_path.exists(),
+        &startup_autosave_path,
         current_project_path,
         &recent_projects.items,
     );
@@ -1053,7 +1129,7 @@ mod tests {
 
     #[test]
     fn prefers_autosave_for_startup_when_available() {
-        let autosave_path = PathBuf::from("/tmp/autosave/current.aref");
+        let autosave_path = PathBuf::from("/tmp/autosave/current.json");
         let source = resolve_startup_project_source(
             true,
             &autosave_path,
@@ -1129,7 +1205,8 @@ mod tests {
         let archive_bytes = fs::read(&project_path).expect("read archive");
         let mut archive = ZipArchive::new(Cursor::new(archive_bytes)).expect("zip archive");
         assert!(archive.by_name(PROJECT_ARCHIVE_METADATA_ENTRY).is_ok());
-        assert!(archive.by_name("assets/asset-1.png").is_ok());
+        let asset_entry = archive.by_name("assets/asset-1.png").expect("asset entry");
+        assert_eq!(asset_entry.compression(), CompressionMethod::Stored);
 
         let loaded = load_project_file_internal(None, &project_path).expect("load project file");
 
@@ -1141,6 +1218,35 @@ mod tests {
             .contains("/opened-projects/"));
         assert!(project_path.exists());
         assert!(!test_directory.join("roundtrip.aref-assets").exists());
+
+        fs::remove_dir_all(test_directory).expect("cleanup temp directory");
+    }
+
+    #[test]
+    fn writes_autosave_project_as_json_with_runtime_asset_paths() {
+        let test_directory = std::env::temp_dir().join(format!("aref-autosave-{}", Uuid::new_v4()));
+        fs::create_dir_all(&test_directory).expect("create temp directory");
+        let autosave_path = test_directory.join("current.json");
+        let asset_path = test_directory.join("asset-1.png");
+        fs::write(&asset_path, vec![1, 2, 3, 4]).expect("write asset");
+        let mut project = sample_project();
+        project.assets.get_mut("asset-1").unwrap().image_path = normalize_path(&asset_path);
+
+        write_autosave_project_to_path(&autosave_path, &project).expect("write autosave json");
+        let contents = fs::read_to_string(&autosave_path).expect("read autosave json");
+        let value: serde_json::Value =
+            serde_json::from_str(&contents).expect("autosave should be json");
+
+        assert_eq!(
+            value["project"]["assets"][0]["imagePath"],
+            normalize_path(&asset_path)
+        );
+
+        let loaded = load_project_file_internal(None, &autosave_path).expect("load autosave json");
+        assert_eq!(
+            loaded.project.assets["asset-1"].image_path,
+            normalize_path(&asset_path)
+        );
 
         fs::remove_dir_all(test_directory).expect("cleanup temp directory");
     }

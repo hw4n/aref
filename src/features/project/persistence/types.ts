@@ -49,7 +49,6 @@ export interface SaveProjectRequest {
 export interface SaveAutosaveRequest {
   currentProjectPath: string | null;
   project: Project;
-  assetSources: ProjectAssetSourcePayload[];
 }
 
 export interface PersistedProjectAssetRecordV2
