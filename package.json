@@ -9,15 +9,16 @@
     "url": "git+ssh://git@github.com/hw4n/aref.git"
   },
   "scripts": {
-    "dev": "vite",
+    "dev": "node scripts/tauri.mjs dev",
+    "dev:web": "vite",
     "build": "tsc --noEmit && vite build",
-    "build:desktop": "tauri build",
+    "build:desktop": "node scripts/tauri.mjs build",
     "preview": "vite preview",
     "release:check": "npm run typecheck && npm test && npm run build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "tauri": "tauri"
+    "tauri": "node scripts/tauri.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",

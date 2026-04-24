@@ -47,13 +47,13 @@ npm install
 ### Run The App
 
 ```bash
-npm run tauri dev
+npm run dev
 ```
 
 For renderer-only development:
 
 ```bash
-npm run dev
+npm run dev:web
 ```
 
 ## Quality Gates
@@ -112,7 +112,7 @@ export OPENAI_API_KEY=sk-...
 export OPENAI_ORGANIZATION=org_...   # optional
 export OPENAI_PROJECT=proj_...       # optional
 export OPENAI_BASE_URL=https://api.openai.com/v1
-npm run tauri dev
+npm run dev
 ```
 
 ### ChatGPT OAuth Bridge
