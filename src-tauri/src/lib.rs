@@ -1,4 +1,5 @@
 mod ima2_sidecar;
+mod image_metadata;
 mod openai_provider;
 mod project_persistence;
 mod provider_logs;

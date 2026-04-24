@@ -1341,12 +1341,17 @@ button:disabled {
   color: var(--danger);
 }
 
+.generation-job-card__warning {
+  color: #ffc75c;
+}
+
 .generation-job-card__success {
   color: #8fd7a1;
 }
 
 .generation-job-card__actions {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(86px, 1fr));
   gap: 8px;
 }
 
@@ -1356,6 +1361,17 @@ button:disabled {
   align-items: center;
   gap: 6px;
   text-align: center;
+  padding: 0.5rem 0.6rem;
+}
+
+.generation-job-card__action--danger {
+  color: #ffb4ab;
+  border-color: rgba(255, 107, 107, 0.3);
+}
+
+.generation-job-card__action--danger:not(:disabled):hover {
+  border-color: rgba(255, 107, 107, 0.55);
+  background: rgba(255, 107, 107, 0.1);
 }
 
 .provider-log-card {

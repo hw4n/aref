@@ -21,6 +21,13 @@ describe("camera math", () => {
     expect(after.y).toBeCloseTo(before.y, 5);
   });
 
+  it("caps zoom at 2400 percent", () => {
+    const camera = resizeViewport(createInitialCamera(), 1200, 800);
+    const nextCamera = applyZoomAtPoint(camera, { x: 600, y: 400 }, 40);
+
+    expect(nextCamera.zoom).toBe(24);
+  });
+
   it("frames a rect into the viewport", () => {
     const camera = resizeViewport(createInitialCamera(), 1000, 800);
     const nextCamera = frameRect(camera, {

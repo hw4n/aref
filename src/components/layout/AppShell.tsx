@@ -98,7 +98,7 @@ export function AppShell() {
     saveProjectAs,
     status: persistenceStatus,
   } = useProjectPersistence();
-  const { submitGeneration, cancelGeneration, retryGeneration } = useGenerationHarness();
+  const { submitGeneration, cancelGeneration, rerunGeneration } = useGenerationHarness();
   const providerManagement = useProviderManagement();
 
   const handleImportFiles = useCallback(
@@ -522,7 +522,7 @@ export function AppShell() {
                 recentProjects={recentProjects}
                 onOpenRecentProject={openRecentProject}
                 onCancelGeneration={cancelGeneration}
-                onRetryGeneration={retryGeneration}
+                onRerunGeneration={rerunGeneration}
               />
             </div>
           ) : null}

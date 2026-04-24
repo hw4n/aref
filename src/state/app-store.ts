@@ -132,6 +132,7 @@ export interface AppStoreState {
   completeGenerationJob: (jobId: string, result: GenerationProviderResult) => string[];
   failGenerationJob: (jobId: string, error: string) => void;
   cancelGenerationJob: (jobId: string) => void;
+  removeGenerationJob: (jobId: string) => void;
   appendDiagnosticLog: (entry: {
     level: DiagnosticLogLevel;
     scope: DiagnosticLogScope;
@@ -1339,6 +1340,23 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
               ...state.project.jobs,
               [jobId]: markGenerationJobCancelled(job),
             },
+          }),
+        };
+      });
+    },
+    removeGenerationJob: (jobId) => {
+      set((state) => {
+        if (!state.project.jobs[jobId]) {
+          return state;
+        }
+
+        const nextJobs = { ...state.project.jobs };
+        delete nextJobs[jobId];
+
+        return {
+          project: bumpProject({
+            ...state.project,
+            jobs: nextJobs,
           }),
         };
       });

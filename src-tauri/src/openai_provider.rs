@@ -8,6 +8,7 @@ use std::{
     time::Duration,
 };
 
+use crate::image_metadata::image_dimensions_from_bytes;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use chrono::Utc;
 use reqwest::{
@@ -732,14 +733,16 @@ async fn execute_openai_request(
         let bytes = STANDARD
             .decode(encoded)
             .map_err(|error| error.to_string())?;
+        let (detected_width, detected_height) =
+            image_dimensions_from_bytes(&bytes).unwrap_or((width, height));
         let file_name = format!("{operation_id}-{}.png", index + 1);
         let target_path = generated_directory.join(&file_name);
-        fs::write(&target_path, bytes).map_err(|error| error.to_string())?;
+        fs::write(&target_path, &bytes).map_err(|error| error.to_string())?;
         images.push(OpenAiGeneratedImage {
             image_path: normalize_path(&target_path),
             thumbnail_path: None,
-            width,
-            height,
+            width: detected_width,
+            height: detected_height,
             source_name: Some(format!("openai-{}.png", index + 1)),
         });
     }

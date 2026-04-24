@@ -4,8 +4,11 @@ import {
   EyeIcon,
   EyeOffIcon,
   RecentIcon,
+  RemoveJobIcon,
+  RerunJobIcon,
   RetryIcon,
   RunningIcon,
+  ReuseJobIcon,
   SparklesIcon,
 } from "@/components/icons/ui-icons";
 import type { AssetItem } from "@/domain/assets/types";
@@ -19,7 +22,7 @@ interface InspectorPanelProps {
   recentProjects: RecentProjectRecord[];
   onOpenRecentProject: (path: string) => void | Promise<void>;
   onCancelGeneration: (jobId: string) => void;
-  onRetryGeneration: (jobId: string) => void | Promise<string | null>;
+  onRerunGeneration: (jobId: string) => void | Promise<string | null>;
 }
 
 function InspectorThumb({ src }: { src: string }) {
@@ -31,21 +34,65 @@ function InspectorThumb({ src }: { src: string }) {
 function GenerationJobCard({
   jobId,
   onCancelGeneration,
-  onRetryGeneration,
+  onRerunGeneration,
 }: {
   jobId: string;
   onCancelGeneration: (jobId: string) => void;
-  onRetryGeneration: (jobId: string) => void | Promise<string | null>;
+  onRerunGeneration: (jobId: string) => void | Promise<string | null>;
 }) {
-  const job = useAppStore((state) => state.project.jobs[jobId]);
+  const { job, existingReferenceIds, missingReferenceCount } = useAppStore((state) => {
+    const currentJob = state.project.jobs[jobId];
+
+    return {
+      job: currentJob,
+      existingReferenceIds: currentJob
+        ? currentJob.request.selectedAssetIds.filter((assetId) => Boolean(state.project.assets[assetId]))
+        : [],
+      missingReferenceCount: currentJob
+        ? currentJob.request.selectedAssetIds.filter((assetId) => !state.project.assets[assetId]).length
+        : 0,
+    };
+  });
+  const setGenerationDraft = useAppStore((state) => state.setGenerationDraft);
+  const removeGenerationJob = useAppStore((state) => state.removeGenerationJob);
+  const pushToast = useAppStore((state) => state.pushToast);
 
   if (!job) {
     return null;
   }
 
   const canCancel = job.status === "queued" || job.status === "running";
-  const canRetry = job.status === "failed" || job.status === "cancelled";
+  const canRerun = !canCancel && missingReferenceCount === 0;
+  const canRemove = !canCancel;
   const resultCount = job.resultAssetIds.length;
+  const reuseJobRequest = () => {
+    setGenerationDraft({
+      prompt: job.request.prompt,
+      negativePrompt: job.request.negativePrompt ?? "",
+      provider: job.request.provider,
+      model: job.request.model,
+      settings: { ...job.request.settings },
+      pinnedAssetIds: existingReferenceIds,
+      isExplicitlyOpened: true,
+    });
+
+    pushToast({
+      kind: missingReferenceCount > 0 ? "info" : "success",
+      title: "Job settings reused",
+      description: missingReferenceCount > 0
+        ? `${missingReferenceCount} missing reference${missingReferenceCount === 1 ? "" : "s"} were skipped.`
+        : "Prompt, refs, and settings were loaded into Generate.",
+    });
+  };
+
+  const removeJob = () => {
+    removeGenerationJob(job.id);
+    pushToast({
+      kind: "info",
+      title: "Job removed",
+      description: "The job was removed from the list.",
+    });
+  };
 
   return (
     <article className="generation-job-card">
@@ -65,6 +112,9 @@ function GenerationJobCard({
         <span>{job.request.settings.aspectRatio}</span>
         <span>{job.providerMode ?? (job.request.selectedAssetIds.length === 1 ? "edit" : "generate")}</span>
         <span>{`Try ${job.attemptCount}`}</span>
+        {missingReferenceCount > 0 ? (
+          <span className="generation-job-card__warning">{`${missingReferenceCount} missing ref${missingReferenceCount === 1 ? "" : "s"}`}</span>
+        ) : null}
       </div>
 
       {job.error ? <p className="generation-job-card__error">{job.error}</p> : null}
@@ -72,22 +122,37 @@ function GenerationJobCard({
         <p className="generation-job-card__success">{`${resultCount} result${resultCount === 1 ? "" : "s"} on canvas`}</p>
       ) : null}
 
-      {canCancel || canRetry ? (
-        <div className="generation-job-card__actions">
-          {canCancel ? (
-            <button className="generation-job-card__action" onClick={() => onCancelGeneration(job.id)}>
-              <CancelIcon size={14} />
-              <span>Cancel</span>
-            </button>
-          ) : null}
-          {canRetry ? (
-            <button className="generation-job-card__action" onClick={() => void onRetryGeneration(job.id)}>
-              <RetryIcon size={14} />
-              <span>Retry</span>
-            </button>
-          ) : null}
-        </div>
-      ) : null}
+      <div className="generation-job-card__actions">
+        {canCancel ? (
+          <button className="generation-job-card__action" onClick={() => onCancelGeneration(job.id)} title="Cancel job">
+            <CancelIcon size={14} />
+            <span>Cancel</span>
+          </button>
+        ) : (
+          <button
+            className="generation-job-card__action"
+            disabled={!canRerun}
+            onClick={() => void onRerunGeneration(job.id)}
+            title={canRerun ? "Rerun job" : "Cannot rerun because original references are missing"}
+          >
+            <RerunJobIcon size={14} />
+            <span>Rerun</span>
+          </button>
+        )}
+        <button className="generation-job-card__action" onClick={reuseJobRequest} title="Reuse prompt and settings">
+          <ReuseJobIcon size={14} />
+          <span>Reuse</span>
+        </button>
+        <button
+          className="generation-job-card__action generation-job-card__action--danger"
+          disabled={!canRemove}
+          onClick={removeJob}
+          title={canRemove ? "Remove job from list" : "Cancel before removing"}
+        >
+          <RemoveJobIcon size={14} />
+          <span>Remove</span>
+        </button>
+      </div>
     </article>
   );
 }
@@ -160,7 +225,7 @@ export function InspectorPanel({
   recentProjects,
   onOpenRecentProject,
   onCancelGeneration,
-  onRetryGeneration,
+  onRerunGeneration,
 }: InspectorPanelProps) {
   const sortedAssets = useAppStore(selectSortedAssets);
   const generationJobs = useAppStore(selectSortedGenerationJobs);
@@ -247,7 +312,7 @@ export function InspectorPanel({
               key={job.id}
               jobId={job.id}
               onCancelGeneration={onCancelGeneration}
-              onRetryGeneration={onRetryGeneration}
+              onRerunGeneration={onRerunGeneration}
             />
           ))}
         </div>

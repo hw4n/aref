@@ -288,6 +288,40 @@ export function RetryIcon(props: IconProps) {
   );
 }
 
+export function RerunJobIcon(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="M18 5v5h-5" />
+      <path d="M18 10a7 7 0 1 0 1 5" />
+      <path d="m10 9 5 3-5 3Z" />
+    </IconBase>
+  );
+}
+
+export function ReuseJobIcon(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <rect height="16" rx="2" width="14" x="5" y="4" />
+      <path d="M8 8h8" />
+      <path d="M8 12h5" />
+      <path d="M8 16h4" />
+      <path d="m15 14 3 2-3 2" />
+    </IconBase>
+  );
+}
+
+export function RemoveJobIcon(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="M5 7h10" />
+      <path d="M5 12h7" />
+      <path d="M5 17h6" />
+      <path d="m16 13 4 4" />
+      <path d="m20 13-4 4" />
+    </IconBase>
+  );
+}
+
 export function CancelIcon(props: IconProps) {
   return (
     <IconBase {...props}>

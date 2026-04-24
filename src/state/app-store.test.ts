@@ -349,6 +349,15 @@ describe("app store", () => {
     });
   });
 
+  it("removes generation jobs from the project job list", () => {
+    const store = createAppStore();
+    const jobId = store.getState().queueGenerationJob(sampleGenerationRequest);
+
+    store.getState().removeGenerationJob(jobId);
+
+    expect(store.getState().project.jobs[jobId]).toBeUndefined();
+  });
+
   it("preserves selection references across a project replacement roundtrip", () => {
     const store = createAppStore();
     store.getState().importAssets([

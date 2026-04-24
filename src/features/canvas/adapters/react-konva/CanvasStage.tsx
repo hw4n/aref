@@ -824,7 +824,7 @@ export function CanvasStage() {
   return (
     <div className="canvas-panel" ref={setPanelElement}>
       <div className={surfaceClassName}>
-        {assets.length === 0 ? (
+        {assets.length === 0 && activeGenerationJobs.length === 0 ? (
           <div className="canvas-onboarding">
             <div className="canvas-onboarding__icon">
               <SelectionIcon size={18} />

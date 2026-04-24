@@ -10,6 +10,10 @@ function isAbortError(error: unknown) {
   return error instanceof Error && error.name === "AbortError";
 }
 
+function getMissingReferenceIds(request: GenerationRequest, assets: Record<string, unknown>) {
+  return request.selectedAssetIds.filter((assetId) => !assets[assetId]);
+}
+
 export function useGenerationHarness() {
   const project = useAppStore((state) => state.project);
   const cancelGenerationJobState = useAppStore((state) => state.cancelGenerationJob);
@@ -39,6 +43,24 @@ export function useGenerationHarness() {
           kind: "error",
           title: "Unknown provider",
           description: `No adapter is registered for ${request.provider}.`,
+        });
+        return null;
+      }
+
+      const missingReferenceIds = getMissingReferenceIds(request, project.assets);
+      if (missingReferenceIds.length > 0) {
+        const description = `${missingReferenceIds.length} original reference${missingReferenceIds.length === 1 ? "" : "s"} no longer exist.`;
+        appendDiagnosticLog({
+          level: "warning",
+          scope: "generation",
+          title: "Generation blocked",
+          message: "Generation cannot rerun because original references are missing.",
+          details: description,
+        });
+        pushToast({
+          kind: "error",
+          title: "References missing",
+          description,
         });
         return null;
       }
@@ -189,7 +211,7 @@ export function useGenerationHarness() {
     [appendDiagnosticLog, cancelGenerationJobState],
   );
 
-  const retryGeneration = useCallback(
+  const rerunGeneration = useCallback(
     async (jobId: string) => {
       const job = project.jobs[jobId];
 
@@ -202,7 +224,16 @@ export function useGenerationHarness() {
         return null;
       }
 
-      return executeGeneration(job.request, job.id);
+      if (job.status === "queued" || job.status === "running") {
+        pushToast({
+          kind: "info",
+          title: "Job already running",
+          description: "Cancel the active job before rerunning it.",
+        });
+        return null;
+      }
+
+      return executeGeneration(job.request);
     },
     [executeGeneration, project.jobs, pushToast],
   );
@@ -211,6 +242,6 @@ export function useGenerationHarness() {
     providers: listGenerationProviders(),
     submitGeneration,
     cancelGeneration,
-    retryGeneration,
+    rerunGeneration,
   };
 }

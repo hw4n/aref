@@ -11,6 +11,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::image_metadata::image_dimensions_from_bytes;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use chrono::Utc;
 use reqwest::{Client, StatusCode, Url};
@@ -1783,16 +1784,18 @@ async fn execute_ima2_sidecar_request(
             execute_single_oauth_request(&client, base_url, request, &prompt, size, &mut cancel_rx)
                 .await?;
         let (mime_type, bytes) = parse_generated_image_payload(&payload)?;
+        let (detected_width, detected_height) =
+            image_dimensions_from_bytes(&bytes).unwrap_or((width, height));
         let extension = extension_from_mime_type(&mime_type);
         let file_name = format!("{}-{}.{}", operation_id, index + 1, extension);
         let target_path = output_directory.join(&file_name);
-        fs::write(&target_path, bytes).map_err(|error| error.to_string())?;
+        fs::write(&target_path, &bytes).map_err(|error| error.to_string())?;
         request_ids.push(request_id);
         images.push(Ima2SidecarGeneratedImage {
             image_path: normalize_path(&target_path),
             thumbnail_path: None,
-            width,
-            height,
+            width: detected_width,
+            height: detected_height,
             source_name: Some(file_name),
         });
     }

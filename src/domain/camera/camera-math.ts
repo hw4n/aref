@@ -3,7 +3,7 @@ import type { Rect, Point } from "@/domain/shared/types";
 import type { CanvasCamera } from "./types";
 
 const MIN_ZOOM = 0.1;
-const MAX_ZOOM = 6;
+const MAX_ZOOM = 24;
 
 export function createInitialCamera(): CanvasCamera {
   return {
