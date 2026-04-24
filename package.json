@@ -1,12 +1,19 @@
 {
   "name": "aref",
   "version": "0.1.0",
+  "description": "Desktop-first infinite reference canvas for visual boards and reference-driven image generation.",
   "private": true,
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/hw4n/aref.git"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
+    "build:desktop": "tauri build",
     "preview": "vite preview",
+    "release:check": "npm run typecheck && npm test && npm run build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",

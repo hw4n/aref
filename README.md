@@ -1,27 +1,37 @@
-# Aref
+<div align="center">
+  <img src="src-tauri/icons/icon.png" width="96" alt="Aref icon" />
+  <h1>Aref</h1>
+  <p><strong>Desktop-first infinite reference canvas for visual boards and reference-driven image generation.</strong></p>
+  <p>
+    <a href="https://github.com/hw4n/aref/actions/workflows/release.yml"><img alt="Release workflow" src="https://github.com/hw4n/aref/actions/workflows/release.yml/badge.svg" /></a>
+    <a href="https://github.com/hw4n/aref/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/hw4n/aref?include_prereleases&label=release" /></a>
+    <img alt="Tauri 2" src="https://img.shields.io/badge/Tauri-2.x-24C8DB" />
+    <img alt="React 18" src="https://img.shields.io/badge/React-18-61DAFB" />
+  </p>
+</div>
 
-Desktop-first infinite reference canvas for visual boards and reference-driven image generation.
+## What It Is
 
-## Current Scope
+Aref is a desktop workspace for collecting image references, arranging them on an infinite canvas, and sending selected references into image generation providers. It is built with Tauri, React, TypeScript, Zustand, and Konva.
 
-- infinite canvas with typed camera state
-- import from file dialog and drag-and-drop
-- selection, marquee, move, resize, rotate, duplicate, delete
-- lock, hide, group, z-order, fit, frame, center
-- single-file `.aref` project save/open/save-as
-- autosave, startup restore, recent projects
-- mock provider, OpenAI provider, and experimental ChatGPT OAuth bridge
-- provider request logs in the inspector
-- test coverage for geometry, store behavior, job state machine, persistence, and provider adapters
+## Highlights
 
-## Setup
+- Infinite canvas with typed camera state, pan/zoom, fit, frame, and center controls.
+- Image import from file dialog, drag-and-drop, and clipboard paste.
+- Selection, marquee, move, resize, rotate, duplicate, delete, lock, hide, group, and z-order actions.
+- Single-file `.aref` project save/open/save-as with autosave, startup restore, and recent projects.
+- Context-aware generation sheet that can use live or pinned reference selections.
+- Mock provider, OpenAI provider, and experimental ChatGPT OAuth bridge.
+- Provider request logs, developer log drawer, and tested persistence boundaries.
+
+## Quick Start
 
 ### Prerequisites
 
 - Node.js 22+
 - npm 10+
 - Rust toolchain
-- Linux desktop deps for Tauri when building on Ubuntu/WSL:
+- Linux desktop dependencies for local Tauri builds:
 
 ```bash
 sudo apt update
@@ -34,25 +44,58 @@ sudo apt install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-
 npm install
 ```
 
-### Run Checks
+### Run The App
 
 ```bash
-npm run typecheck
-npm test
-npm run build
+npm run tauri dev
 ```
 
-### Run Renderer Only
+For renderer-only development:
 
 ```bash
 npm run dev
 ```
 
-### Run Desktop App
+## Quality Gates
+
+Run the same checks expected before cutting a release:
 
 ```bash
-npm run tauri dev
+npm run release:check
 ```
+
+That runs TypeScript type checking, the Vitest suite, and a production Vite build.
+
+## Release
+
+GitHub releases are created by `.github/workflows/release.yml` whenever a semantic version tag is pushed.
+
+1. Update the version in `package.json`, `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.toml`.
+2. Run `npm run release:check`.
+3. Commit the release changes.
+4. Push a tag:
+
+```bash
+git tag v0.1.0
+git push origin main
+git push origin v0.1.0
+```
+
+The workflow builds Linux, Windows, and macOS installers and uploads them to the matching GitHub Release.
+
+### Local Desktop Build
+
+```bash
+npm run build:desktop
+```
+
+Tauri bundles are written under:
+
+```text
+src-tauri/target/release/bundle/
+```
+
+WSL/Linux builds Linux artifacts only. Build on Windows or macOS hosts for native Windows or macOS packages.
 
 ## Provider Setup
 
@@ -74,46 +117,16 @@ npm run tauri dev
 
 ### ChatGPT OAuth Bridge
 
-The experimental provider expects a local `openai-oauth` style proxy and Codex auth on the host machine. The app can start the proxy from the inspector in desktop builds.
+The experimental provider expects a local `openai-oauth` style proxy and Codex auth on the host machine. Desktop builds can start the proxy from the inspector.
 
 ## `.aref` Project Format
 
 - `.aref` is a single-file archive.
 - The archive contains `project.json` plus embedded `assets/*`.
 - Current saves use `schemaVersion: 2`.
-- Old schema-1 JSON + sidecar projects still load for migration.
-
-## Packaging
-
-### Linux
-
-```bash
-npm run tauri build
-```
-
-Typical artifacts land under `src-tauri/target/release/bundle/`.
-
-### Windows
-
-Build on a Windows host for native installers:
-
-```powershell
-npm install
-npm run tauri build
-```
-
-WSL builds Linux artifacts, not native Windows packages.
-
-### macOS
-
-Build on macOS with Xcode command line tools installed:
-
-```bash
-npm install
-npm run tauri build
-```
+- Old schema-1 JSON plus sidecar projects still load for migration.
 
 ## Test Notes
 
-- `src/test/e2e-smoke.test.ts` covers the renderer-side MVP flow: import -> arrange -> reopen-style roundtrip -> select refs -> mock generate.
+- `src/test/e2e-smoke.test.ts` covers the renderer-side MVP flow: import, arrange, reopen-style roundtrip, select refs, and mock generate.
 - `src-tauri/src/project_persistence.rs` includes archive roundtrip and schema-1 migration tests for the desktop persistence boundary.
