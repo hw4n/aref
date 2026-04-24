@@ -7,6 +7,7 @@ import type { AssetItem } from "./types";
 export interface ImportedImageDraft {
   imagePath: string;
   sourceName: string;
+  thumbnailPath?: string | null;
   width: number;
   height: number;
 }
@@ -51,7 +52,7 @@ export function createImportedAssets(
       kind: "imported",
       imagePath: draft.imagePath,
       sourceName: draft.sourceName,
-      thumbnailPath: null,
+      thumbnailPath: draft.thumbnailPath ?? null,
       width: draft.width,
       height: draft.height,
       x: importOrigin.x + offset.x,

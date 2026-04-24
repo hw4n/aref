@@ -3,6 +3,11 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 
 import type { ImportedImageDraft } from "@/domain/assets/imported-asset-utils";
 import type { Project } from "@/domain/project/types";
+import {
+  createImageThumbnailBlob,
+  getThumbnailFileName,
+  loadImageElement,
+} from "@/features/images/utils/image-thumbnail";
 
 import type {
   ProjectAssetSourcePayload,
@@ -15,6 +20,14 @@ import type {
 import { hasTauriRuntime } from "./tauri-runtime";
 
 const PROJECT_FILE_EXTENSIONS = ["aref"];
+
+type ManagedThumbnailDraft = {
+  imagePath: string;
+  sourceName?: string;
+  thumbnailPath?: string | null;
+};
+
+const managedThumbnailRequests = new Map<string, Promise<string | null>>();
 
 function isRemoteUrl(value: string) {
   return value.startsWith("http://") || value.startsWith("https://");
@@ -77,6 +90,94 @@ async function toBytes(url: string) {
   }
 
   return Array.from(new Uint8Array(await response.arrayBuffer()));
+}
+
+async function blobToBytes(blob: Blob) {
+  return Array.from(new Uint8Array(await blob.arrayBuffer()));
+}
+
+async function ingestImageAsset(filename: string, bytes: number[]) {
+  return invoke<string>("ingest_image_asset", {
+    filename,
+    bytes,
+  });
+}
+
+async function ingestThumbnailBlob(sourceName: string | undefined, thumbnailBlob: Blob | null) {
+  if (!thumbnailBlob) {
+    return null;
+  }
+
+  try {
+    return await ingestImageAsset(getThumbnailFileName(sourceName), await blobToBytes(thumbnailBlob));
+  } catch {
+    return null;
+  }
+}
+
+async function readImportedFileMetadata(file: File, sourceUrl: string) {
+  const image = await loadImageElement(sourceUrl, file.name);
+  const thumbnailBlob = await createImageThumbnailBlob(image);
+
+  return {
+    sourceName: file.name,
+    thumbnailBlob,
+    width: image.naturalWidth,
+    height: image.naturalHeight,
+  };
+}
+
+async function createManagedImageThumbnailInternal(draft: ManagedThumbnailDraft) {
+  if (!hasTauriRuntime() || !isLikelyFilePath(draft.imagePath)) {
+    return null;
+  }
+
+  let objectUrl: string | null = null;
+
+  try {
+    const bytes = new Uint8Array(await readManagedImageBytes(draft.imagePath));
+    const blob = new Blob([bytes]);
+    objectUrl = URL.createObjectURL(blob);
+    const image = await loadImageElement(objectUrl, draft.sourceName ?? draft.imagePath);
+    const thumbnailBlob = await createImageThumbnailBlob(image);
+
+    return await ingestThumbnailBlob(draft.sourceName ?? draft.imagePath, thumbnailBlob);
+  } catch {
+    return null;
+  } finally {
+    if (objectUrl) {
+      URL.revokeObjectURL(objectUrl);
+    }
+  }
+}
+
+export function createManagedImageThumbnail(draft: ManagedThumbnailDraft) {
+  const existingRequest = managedThumbnailRequests.get(draft.imagePath);
+
+  if (existingRequest) {
+    return existingRequest;
+  }
+
+  const request = createManagedImageThumbnailInternal(draft).finally(() => {
+    managedThumbnailRequests.delete(draft.imagePath);
+  });
+  managedThumbnailRequests.set(draft.imagePath, request);
+
+  return request;
+}
+
+export async function ensureManagedImageThumbnails<T extends ManagedThumbnailDraft>(drafts: T[]) {
+  return Promise.all(
+    drafts.map(async (draft) => {
+      if (draft.thumbnailPath || !isLikelyFilePath(draft.imagePath)) {
+        return draft;
+      }
+
+      const thumbnailPath = await createManagedImageThumbnail(draft);
+
+      return thumbnailPath ? { ...draft, thumbnailPath } : draft;
+    }),
+  );
 }
 
 async function createAssetSourcePayload(project: Project): Promise<ProjectAssetSourcePayload[]> {
@@ -144,37 +245,25 @@ export async function ingestImportedFile(file: File): Promise<ImportedImageDraft
   const transientUrl = URL.createObjectURL(file);
 
   try {
-    const metadata = await new Promise<Omit<ImportedImageDraft, "imagePath">>((resolve, reject) => {
-      const image = new window.Image();
-
-      image.onload = () => {
-        resolve({
-          sourceName: file.name,
-          width: image.naturalWidth,
-          height: image.naturalHeight,
-        });
-      };
-
-      image.onerror = () => reject(new Error(`Failed to load image file: ${file.name}`));
-      image.src = transientUrl;
-    });
+    const metadata = await readImportedFileMetadata(file, transientUrl);
+    const { thumbnailBlob, ...draftMetadata } = metadata;
 
     if (!hasTauriRuntime()) {
       return {
-        ...metadata,
+        ...draftMetadata,
         imagePath: transientUrl,
+        thumbnailPath: null,
       };
     }
 
     const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
-    const imagePath = await invoke<string>("ingest_image_asset", {
-      filename: file.name,
-      bytes,
-    });
+    const imagePath = await ingestImageAsset(file.name, bytes);
+    const thumbnailPath = await ingestThumbnailBlob(file.name, thumbnailBlob);
 
     return {
-      ...metadata,
+      ...draftMetadata,
       imagePath,
+      thumbnailPath,
     };
   } finally {
     if (hasTauriRuntime()) {
@@ -197,7 +286,12 @@ export async function importChatGptShareImages(url: string): Promise<ChatGptShar
     throw new Error("ChatGPT share import is only available in the desktop app.");
   }
 
-  return invoke<ChatGptShareImportResult>("import_chatgpt_share_images", { url });
+  const result = await invoke<ChatGptShareImportResult>("import_chatgpt_share_images", { url });
+
+  return {
+    ...result,
+    drafts: await ensureManagedImageThumbnails(result.drafts),
+  };
 }
 
 export async function loadProjectFromPath(path: string) {

@@ -33,6 +33,7 @@ import {
   ROTATION_SNAP_TOLERANCE_DEGREES,
   getRotationSnapAngles,
 } from "@/features/canvas/utils/rotation-snaps";
+import { isLikelyFilePath } from "@/features/project/persistence/project-io";
 import { useAppStore } from "@/state/app-store";
 import {
   selectActiveGenerationJobs,
@@ -48,7 +49,8 @@ interface AssetLayerItemProps {
   isPanMode: boolean;
   onSelect: (assetId: string, additive: boolean) => void;
   onContextMenu: (assetId: string, clientPosition: Point, isSelected: boolean, additive: boolean) => void;
-  onBeginDrag: (assetId: string, position: Point, isSelected: boolean) => void;
+  onInteractionActiveChange: (active: boolean) => void;
+  onBeginDrag: (assetId: string, position: Point) => void;
   onDrag: (assetId: string, position: Point) => void;
   onEndDrag: (assetId: string, position: Point) => void;
   setNodeRef: (assetId: string, node: Konva.Group | null) => void;
@@ -61,7 +63,78 @@ interface DragSession {
   startPositions: Record<string, Point>;
 }
 
-function GenerationPlaceholderThumb({
+function getAssetInitial(asset: AssetItem) {
+  return (asset.sourceName ?? asset.kind).trim().charAt(0).toUpperCase() || "?";
+}
+
+function getAssetThumbnailSource(asset: AssetItem) {
+  return asset.thumbnailPath ?? (isLikelyFilePath(asset.imagePath) ? null : asset.imagePath);
+}
+
+function getCoverCrop(image: HTMLImageElement, width: number, height: number) {
+  const imageWidth = image.naturalWidth || image.width || width;
+  const imageHeight = image.naturalHeight || image.height || height;
+  const targetRatio = width / height;
+  const imageRatio = imageWidth / imageHeight;
+
+  if (imageRatio > targetRatio) {
+    const cropWidth = imageHeight * targetRatio;
+    return {
+      x: (imageWidth - cropWidth) / 2,
+      y: 0,
+      width: cropWidth,
+      height: imageHeight,
+    };
+  }
+
+  const cropHeight = imageWidth / targetRatio;
+  return {
+    x: 0,
+    y: (imageHeight - cropHeight) / 2,
+    width: imageWidth,
+    height: cropHeight,
+  };
+}
+
+function GenerationPlaceholderThumbFrame({
+  label,
+  size,
+  x,
+  y,
+}: {
+  label?: string;
+  size: number;
+  x: number;
+  y: number;
+}) {
+  return (
+    <>
+      <Rect
+        x={x}
+        y={y}
+        width={size}
+        height={size}
+        cornerRadius={4}
+        fill="rgba(255,255,255,0.08)"
+        stroke="rgba(255,255,255,0.12)"
+      />
+      {label ? (
+        <Text
+          x={x}
+          y={y + size / 2 - 7}
+          width={size}
+          align="center"
+          text={label}
+          fontSize={12}
+          fontStyle="bold"
+          fill="rgba(238, 241, 245, 0.72)"
+        />
+      ) : null}
+    </>
+  );
+}
+
+function GenerationPlaceholderThumbImage({
   src,
   size,
   x,
@@ -75,22 +148,15 @@ function GenerationPlaceholderThumb({
   const image = useHtmlImage(src);
 
   if (!image) {
-    return (
-      <Rect
-        x={x}
-        y={y}
-        width={size}
-        height={size}
-        cornerRadius={4}
-        fill="rgba(255,255,255,0.08)"
-        stroke="rgba(255,255,255,0.12)"
-      />
-    );
+    return <GenerationPlaceholderThumbFrame size={size} x={x} y={y} />;
   }
+
+  const crop = getCoverCrop(image, size, size);
 
   return (
     <KonvaImage
       image={image}
+      crop={crop}
       x={x}
       y={y}
       width={size}
@@ -100,18 +166,40 @@ function GenerationPlaceholderThumb({
   );
 }
 
+function GenerationPlaceholderThumb({
+  asset,
+  size,
+  x,
+  y,
+}: {
+  asset: AssetItem;
+  size: number;
+  x: number;
+  y: number;
+}) {
+  const source = getAssetThumbnailSource(asset);
+
+  if (!source) {
+    return <GenerationPlaceholderThumbFrame label={getAssetInitial(asset)} size={size} x={x} y={y} />;
+  }
+
+  return <GenerationPlaceholderThumbImage src={source} size={size} x={x} y={y} />;
+}
+
 function GenerationJobPlaceholderItem({
   job,
   referenceAssets,
   animationTick,
   isPanMode,
   onDrag,
+  onInteractionActiveChange,
 }: {
   job: GenerationJob;
   referenceAssets: AssetItem[];
   animationTick: number;
   isPanMode: boolean;
   onDrag: (jobId: string, position: Point) => void;
+  onInteractionActiveChange: (active: boolean) => void;
 }) {
   const statusLabel = job.status === "queued" ? "Queued" : "Generating";
   const statusStroke = job.status === "queued" ? "rgba(255, 199, 92, 0.7)" : "rgba(127, 150, 255, 0.82)";
@@ -133,6 +221,7 @@ function GenerationJobPlaceholderItem({
       draggable={!isPanMode}
       onDragStart={(event) => {
         event.cancelBubble = true;
+        onInteractionActiveChange(true);
       }}
       onMouseDown={(event) => {
         event.cancelBubble = true;
@@ -159,6 +248,7 @@ function GenerationJobPlaceholderItem({
           x: event.target.x(),
           y: event.target.y(),
         });
+        onInteractionActiveChange(false);
       }}
     >
       {positions.map((position, index) => {
@@ -215,7 +305,7 @@ function GenerationJobPlaceholderItem({
               {visibleReferences.map((asset, referenceIndex) => (
                 <GenerationPlaceholderThumb
                   key={asset.id}
-                  src={asset.thumbnailPath ?? asset.imagePath}
+                  asset={asset}
                   size={thumbnailSize}
                   x={-displaySize.width / 2 + 18 + referenceIndex * (thumbnailSize + 8)}
                   y={0}
@@ -295,6 +385,7 @@ function AssetLayerItem({
   isPanMode,
   onSelect,
   onContextMenu,
+  onInteractionActiveChange,
   onBeginDrag,
   onDrag,
   onEndDrag,
@@ -303,6 +394,7 @@ function AssetLayerItem({
   const image = useHtmlImage(asset.imagePath);
   const width = asset.width * asset.scale;
   const height = asset.height * asset.scale;
+  const suppressClickAfterDragRef = useRef(false);
 
   return (
     <Group
@@ -311,6 +403,22 @@ function AssetLayerItem({
       y={asset.y}
       rotation={asset.rotation}
       draggable={!asset.locked && !isPanMode}
+      onMouseDown={(event) => {
+        if ((event.evt as MouseEvent).button === 0 && !asset.locked && !isPanMode) {
+          onInteractionActiveChange(true);
+        }
+      }}
+      onMouseUp={() => {
+        onInteractionActiveChange(false);
+      }}
+      onTouchStart={() => {
+        if (!asset.locked && !isPanMode) {
+          onInteractionActiveChange(true);
+        }
+      }}
+      onTouchEnd={() => {
+        onInteractionActiveChange(false);
+      }}
       onClick={(event) => {
         const mouseEvent = event.evt as MouseEvent;
         if (mouseEvent.button !== 0) {
@@ -318,10 +426,18 @@ function AssetLayerItem({
         }
 
         event.cancelBubble = true;
+        if (suppressClickAfterDragRef.current) {
+          return;
+        }
+
         onSelect(asset.id, mouseEvent.shiftKey);
       }}
       onTap={(event) => {
         event.cancelBubble = true;
+        if (suppressClickAfterDragRef.current) {
+          return;
+        }
+
         onSelect(asset.id, false);
       }}
       onContextMenu={(event) => {
@@ -339,26 +455,32 @@ function AssetLayerItem({
       }}
       onDragStart={(event) => {
         event.cancelBubble = true;
+        suppressClickAfterDragRef.current = false;
         onBeginDrag(
           asset.id,
           {
             x: event.target.x(),
             y: event.target.y(),
           },
-          isSelected,
         );
       }}
       onDragMove={(event) => {
+        event.cancelBubble = true;
+        suppressClickAfterDragRef.current = true;
         onDrag(asset.id, {
           x: event.target.x(),
           y: event.target.y(),
         });
       }}
       onDragEnd={(event) => {
+        event.cancelBubble = true;
         onEndDrag(asset.id, {
           x: event.target.x(),
           y: event.target.y(),
         });
+        window.setTimeout(() => {
+          suppressClickAfterDragRef.current = false;
+        }, 0);
       }}
     >
       <Rect
@@ -414,6 +536,9 @@ export function CanvasStage() {
   const transformerRef = useRef<Konva.Transformer | null>(null);
   const assetNodeRefs = useRef<Record<string, Konva.Group | null>>({});
   const dragSessionRef = useRef<DragSession | null>(null);
+  const dragPreviewPositionsRef = useRef<Record<string, Point> | null>(null);
+  const selectedAssetIdsRef = useRef<string[]>([]);
+  const assetMapRef = useRef<Record<string, AssetItem>>({});
   const panSessionRef = useRef<{
     originPointer: Point;
     originCamera: Point;
@@ -458,6 +583,7 @@ export function CanvasStage() {
   const setAssetPositions = useAppStore((state) => state.setAssetPositions);
   const setGenerationDraft = useAppStore((state) => state.setGenerationDraft);
   const setGenerationJobCanvasPlacement = useAppStore((state) => state.setGenerationJobCanvasPlacement);
+  const setCanvasInteractionActive = useAppStore((state) => state.setCanvasInteractionActive);
   const setMarquee = useAppStore((state) => state.setMarquee);
   const setSpacePressed = useAppStore((state) => state.setSpacePressed);
   const setViewportSize = useAppStore((state) => state.setViewportSize);
@@ -529,6 +655,10 @@ export function CanvasStage() {
     () => Object.fromEntries(assets.map((asset) => [asset.id, asset])),
     [assets],
   );
+  const visibleAssetNodeKey = useMemo(
+    () => assets.map((asset) => `${asset.id}:${asset.locked ? "1" : "0"}`).join("|"),
+    [assets],
+  );
   const zoomLabel = `${Math.round(camera.zoom * 100)}%`;
   const hasLockedSelection = selectedAssetIds.some((assetId) => assetMap[assetId]?.locked);
   const surfaceClassName = isPanning
@@ -548,6 +678,14 @@ export function CanvasStage() {
         top: Math.max(12, Math.min(contextMenu.y, size.height - 260)),
       }
     : null;
+
+  useEffect(() => {
+    selectedAssetIdsRef.current = selectedAssetIds;
+  }, [selectedAssetIds]);
+
+  useEffect(() => {
+    assetMapRef.current = assetMap;
+  }, [assetMap]);
 
   useEffect(() => {
     if (size.width > 0 && size.height > 0) {
@@ -636,10 +774,24 @@ export function CanvasStage() {
 
     transformer.nodes(nodes);
     transformer.getLayer()?.batchDraw();
-  }, [assets, hasLockedSelection, selectedAssetIds]);
+  }, [hasLockedSelection, selectedAssetIds, visibleAssetNodeKey]);
 
   const setNodeRef = (assetId: string, node: Konva.Group | null) => {
     assetNodeRefs.current[assetId] = node;
+  };
+
+  const syncDragPreviewNodes = (previewPositions: Record<string, Point>, activeAssetId: string) => {
+    for (const [id, previewPosition] of Object.entries(previewPositions)) {
+      if (id === activeAssetId) {
+        continue;
+      }
+
+      assetNodeRefs.current[id]?.position(previewPosition);
+    }
+
+    const transformer = transformerRef.current;
+    transformer?.forceUpdate();
+    transformer?.getLayer()?.batchDraw();
   };
 
   const commitTransformerState = () => {
@@ -689,31 +841,38 @@ export function CanvasStage() {
     );
   };
 
-  const beginAssetDrag = (assetId: string, position: Point, isSelected: boolean) => {
-    const activeIds = isSelected ? selectedAssetIds : [assetId];
-    const movableIds = activeIds.filter((id) => !assetMap[id]?.locked);
+  const beginAssetDrag = (assetId: string, position: Point) => {
+    setCanvasInteractionActive(true);
+    const currentSelectedIds = selectedAssetIdsRef.current;
+    const currentAssetMap = assetMapRef.current;
+    const isCurrentlySelected = currentSelectedIds.includes(assetId);
+    const activeIds = isCurrentlySelected ? currentSelectedIds : [assetId];
+    const movableIds = activeIds.filter((id) => !currentAssetMap[id]?.locked);
 
-    if (!isSelected) {
+    if (!isCurrentlySelected) {
       selectAsset(assetId);
     }
+
+    dragPreviewPositionsRef.current = null;
+    const startPositions = Object.fromEntries(
+      movableIds
+        .map((id) => {
+          const asset = currentAssetMap[id];
+
+          if (!asset) {
+            return null;
+          }
+
+          return [id, { x: asset.x, y: asset.y }] as const;
+        })
+        .filter((entry): entry is readonly [string, Point] => Boolean(entry)),
+    );
 
     dragSessionRef.current = {
       assetId,
       selectedIds: movableIds,
-      originPosition: position,
-      startPositions: Object.fromEntries(
-        movableIds
-          .map((id) => {
-            const asset = assetMap[id];
-
-            if (!asset) {
-              return null;
-            }
-
-            return [id, { x: asset.x, y: asset.y }] as const;
-          })
-          .filter((entry): entry is readonly [string, Point] => Boolean(entry)),
-      ),
+      originPosition: startPositions[assetId] ?? position,
+      startPositions,
     };
   };
 
@@ -721,44 +880,73 @@ export function CanvasStage() {
     const dragSession = dragSessionRef.current;
 
     if (!dragSession || dragSession.assetId !== assetId) {
-      setAssetPosition(assetId, position);
       return;
     }
 
-    if (dragSession.selectedIds.length > 1) {
-      const delta = {
-        x: position.x - dragSession.originPosition.x,
-        y: position.y - dragSession.originPosition.y,
-      };
+    const delta = {
+      x: position.x - dragSession.originPosition.x,
+      y: position.y - dragSession.originPosition.y,
+    };
+    const previewPositions = Object.fromEntries(
+      dragSession.selectedIds
+        .map((id) => {
+          const startPosition = dragSession.startPositions[id];
 
-      setAssetPositions(
-        dragSession.selectedIds
-          .map((id) => {
-            const startPosition = dragSession.startPositions[id];
+          if (!startPosition) {
+            return null;
+          }
 
-            if (!startPosition) {
-              return null;
-            }
+          return [id, { x: startPosition.x + delta.x, y: startPosition.y + delta.y }] as const;
+        })
+        .filter((entry): entry is readonly [string, Point] => Boolean(entry)),
+    );
 
-            return {
-              id,
-              position: {
-                x: startPosition.x + delta.x,
-                y: startPosition.y + delta.y,
-              },
-            };
-          })
-          .filter((update): update is { id: string; position: Point } => Boolean(update)),
-      );
+    if (Object.keys(previewPositions).length === 0) {
       return;
     }
 
-    setAssetPosition(assetId, position);
+    dragPreviewPositionsRef.current = previewPositions;
+    syncDragPreviewNodes(previewPositions, assetId);
   };
 
   const endAssetDrag = (assetId: string, position: Point) => {
-    updateAssetDrag(assetId, position);
+    const dragSession = dragSessionRef.current;
+
+    if (!dragSession || dragSession.assetId !== assetId) {
+      setAssetPosition(assetId, position);
+      dragPreviewPositionsRef.current = null;
+      setCanvasInteractionActive(false);
+      return;
+    }
+
+    const delta = {
+      x: position.x - dragSession.originPosition.x,
+      y: position.y - dragSession.originPosition.y,
+    };
+    const updates = dragSession.selectedIds
+      .map((id) => {
+        const startPosition = dragSession.startPositions[id];
+
+        if (!startPosition) {
+          return null;
+        }
+
+        return {
+          id,
+          position: {
+            x: startPosition.x + delta.x,
+            y: startPosition.y + delta.y,
+          },
+        };
+      })
+      .filter((update): update is { id: string; position: Point } => Boolean(update));
+
+    dragPreviewPositionsRef.current = Object.fromEntries(updates.map((update) => [update.id, update.position]));
+    syncDragPreviewNodes(dragPreviewPositionsRef.current, assetId);
+    setAssetPositions(updates);
     dragSessionRef.current = null;
+    dragPreviewPositionsRef.current = null;
+    setCanvasInteractionActive(false);
   };
 
   const finalizeMarquee = (pointer: Point | null) => {
@@ -868,6 +1056,7 @@ export function CanvasStage() {
 
               if (shouldPan) {
                 event.evt.preventDefault();
+                setCanvasInteractionActive(true);
                 panSessionRef.current = {
                   originPointer: pointer,
                   originCamera: {
@@ -881,6 +1070,7 @@ export function CanvasStage() {
 
               if (clickedEmptyCanvas && event.evt.button === 0) {
                 const originWorld = screenToWorld(camera, pointer);
+                setCanvasInteractionActive(true);
                 setMarqueeSession({
                   additive: event.evt.shiftKey,
                   originWorld,
@@ -919,11 +1109,12 @@ export function CanvasStage() {
               panSessionRef.current = null;
               setIsPanning(false);
               finalizeMarquee(pointer);
+              setCanvasInteractionActive(false);
             }}
             onMouseLeave={() => {
               panSessionRef.current = null;
               setIsPanning(false);
-              dragSessionRef.current = null;
+              setCanvasInteractionActive(false);
             }}
             onContextMenu={(event) => {
               event.evt.preventDefault();
@@ -950,20 +1141,32 @@ export function CanvasStage() {
             </Layer>
 
             <Layer>
-              {assets.map((asset) => (
-                <AssetLayerItem
-                  key={asset.id}
-                  asset={asset}
-                  isSelected={selectedAssetSet.has(asset.id)}
-                  isPanMode={isPanning || isSpacePressed || Boolean(marqueeSession)}
-                  onContextMenu={handleAssetContextMenu}
-                  onSelect={(assetId, additive) => selectAsset(assetId, { additive })}
-                  onBeginDrag={beginAssetDrag}
-                  onDrag={updateAssetDrag}
-                  onEndDrag={endAssetDrag}
-                  setNodeRef={setNodeRef}
-                />
-              ))}
+              {assets.map((asset) => {
+                const previewPosition = dragPreviewPositionsRef.current?.[asset.id];
+                const displayAsset = previewPosition
+                  ? {
+                      ...asset,
+                      x: previewPosition.x,
+                      y: previewPosition.y,
+                    }
+                  : asset;
+
+                return (
+                  <AssetLayerItem
+                    key={asset.id}
+                    asset={displayAsset}
+                    isSelected={selectedAssetSet.has(asset.id)}
+                    isPanMode={isPanning || isSpacePressed || Boolean(marqueeSession)}
+                    onContextMenu={handleAssetContextMenu}
+                    onInteractionActiveChange={setCanvasInteractionActive}
+                    onSelect={(assetId, additive) => selectAsset(assetId, { additive })}
+                    onBeginDrag={beginAssetDrag}
+                    onDrag={updateAssetDrag}
+                    onEndDrag={endAssetDrag}
+                    setNodeRef={setNodeRef}
+                  />
+                );
+              })}
 
               <Transformer
                 ref={transformerRef}
@@ -979,7 +1182,11 @@ export function CanvasStage() {
                 borderStroke="#7f96ff"
                 borderStrokeWidth={1.5}
                 resizeEnabled={!hasLockedSelection}
-                onTransformEnd={commitTransformerState}
+                onTransformStart={() => setCanvasInteractionActive(true)}
+                onTransformEnd={() => {
+                  commitTransformerState();
+                  setCanvasInteractionActive(false);
+                }}
                 boundBoxFunc={(oldBox, newBox) => {
                   if (Math.abs(newBox.width) < 32 || Math.abs(newBox.height) < 32) {
                     return oldBox;
@@ -1001,6 +1208,7 @@ export function CanvasStage() {
                   animationTick={generationAnimationTick}
                   isPanMode={isPanning || isSpacePressed || Boolean(marqueeSession)}
                   onDrag={setGenerationJobCanvasPlacement}
+                  onInteractionActiveChange={setCanvasInteractionActive}
                 />
               ))}
             </Layer>

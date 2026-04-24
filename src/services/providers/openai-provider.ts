@@ -4,6 +4,7 @@ import type {
   OneShotGenerationProviderAdapter,
 } from "@/domain/providers/types";
 import {
+  ensureManagedImageThumbnails,
   isLikelyFilePath,
   readManagedImageBytes,
 } from "@/features/project/persistence/project-io";
@@ -201,13 +202,15 @@ export const openAiGenerationProvider: OneShotGenerationProviderAdapter = {
         }
 
         if (snapshot.status === "succeeded") {
+          const images = await ensureManagedImageThumbnails(snapshot.images ?? []);
+
           return {
             provider: this.id,
             model: invocation.request.model,
             completedAt: snapshot.completedAt ?? new Date().toISOString(),
             requestId: snapshot.requestId ?? null,
             mode: snapshot.mode ?? (referenceImages.length > 0 ? "edit" : "generate"),
-            images: snapshot.images ?? [],
+            images,
           };
         }
 

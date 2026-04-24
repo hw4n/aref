@@ -23,15 +23,9 @@ import type {
   GenerationRequest,
 } from "@/domain/jobs/types";
 import type { GenerationProviderAdapter } from "@/domain/providers/types";
-import { useRenderableImageUrl } from "@/features/images/hooks/use-renderable-image-url";
+import { AssetThumbnail } from "@/features/images/components/AssetThumbnail";
 import { useAppStore } from "@/state/app-store";
 import { selectSelectedAssets, selectSelectedGroups } from "@/state/selectors/canvas-selectors";
-
-function ReferenceThumb({ src }: { src: string }) {
-  const renderableSrc = useRenderableImageUrl(src);
-
-  return <img alt="" src={renderableSrc} />;
-}
 
 const ASPECT_RATIO_OPTIONS: GenerationAspectRatio[] = ["unspecified", "1:1", "4:3", "3:4", "16:9", "9:16"];
 const QUALITY_OPTIONS: GenerationImageQuality[] = ["low", "medium", "high"];
@@ -165,7 +159,7 @@ export function ContextualGenerationSheet({
                 onClick={() => handleRemoveReference(asset.id)}
                 title="Remove from generation references"
               >
-                <ReferenceThumb src={asset.thumbnailPath ?? asset.imagePath} />
+                <AssetThumbnail asset={asset} />
                 <span className="inspector-panel__thumb-remove">
                   <CancelIcon size={12} />
                 </span>

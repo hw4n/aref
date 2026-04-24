@@ -9,6 +9,7 @@ const runtimeMocks = vi.hoisted(() => ({
 }));
 
 const projectIoMocks = vi.hoisted(() => ({
+  ensureManagedImageThumbnails: vi.fn(async <T,>(drafts: T[]) => drafts),
   readManagedImageBytes: vi.fn(),
   isLikelyFilePath: vi.fn((value: string) => value.startsWith("/")),
 }));
@@ -24,6 +25,7 @@ vi.mock("@/features/project/persistence/tauri-runtime", () => ({
 }));
 
 vi.mock("@/features/project/persistence/project-io", () => ({
+  ensureManagedImageThumbnails: projectIoMocks.ensureManagedImageThumbnails,
   isLikelyFilePath: projectIoMocks.isLikelyFilePath,
   readManagedImageBytes: projectIoMocks.readManagedImageBytes,
 }));
@@ -52,6 +54,7 @@ describe("ima2 sidecar generation provider", () => {
     runtimeMocks.startIma2SidecarGeneration.mockReset();
     runtimeMocks.pollIma2SidecarGeneration.mockReset();
     runtimeMocks.cancelIma2SidecarGeneration.mockReset();
+    projectIoMocks.ensureManagedImageThumbnails.mockClear();
     projectIoMocks.readManagedImageBytes.mockReset();
     projectIoMocks.isLikelyFilePath.mockClear();
   });

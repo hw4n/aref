@@ -32,6 +32,7 @@ describe("createImportedAssets", () => {
         {
           imagePath: "file://one",
           sourceName: "one.png",
+          thumbnailPath: "file://one-thumb",
           width: 1600,
           height: 900,
         },
@@ -52,5 +53,7 @@ describe("createImportedAssets", () => {
     expect(assets[0]?.scale).toBeLessThan(1);
     expect(assets[0]?.x).not.toBe(assets[1]?.x);
     expect(assets[0]?.sourceName).toBe("one.png");
+    expect(assets[0]?.thumbnailPath).toBe("file://one-thumb");
+    expect(assets[1]?.thumbnailPath).toBeNull();
   });
 });

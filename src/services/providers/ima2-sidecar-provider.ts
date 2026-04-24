@@ -4,6 +4,7 @@ import type {
   OneShotGenerationProviderAdapter,
 } from "@/domain/providers/types";
 import {
+  ensureManagedImageThumbnails,
   isLikelyFilePath,
   readManagedImageBytes,
 } from "@/features/project/persistence/project-io";
@@ -196,6 +197,8 @@ export const ima2SidecarGenerationProvider: OneShotGenerationProviderAdapter = {
         }
 
         if (snapshot.status === "succeeded") {
+          const images = await ensureManagedImageThumbnails(snapshot.images ?? []);
+
           return {
             provider: this.id,
             model: IMA2_SIDECAR_MODEL,
@@ -204,7 +207,7 @@ export const ima2SidecarGenerationProvider: OneShotGenerationProviderAdapter = {
             mode:
               snapshot.mode
               ?? (referenceImages.length === 1 ? "edit" : "generate"),
-            images: snapshot.images ?? [],
+            images,
           };
         }
 

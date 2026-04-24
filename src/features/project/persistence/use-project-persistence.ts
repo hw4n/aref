@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { createEmptyProject } from "@/domain/project/sample-project";
-import { useAppStore } from "@/state/app-store";
+import { appStore, useAppStore } from "@/state/app-store";
 
 import {
   chooseOpenProjectPath,
@@ -15,7 +15,7 @@ import {
 import { hasTauriRuntime } from "./tauri-runtime";
 import type { RecentProjectRecord } from "./types";
 
-const AUTOSAVE_DEBOUNCE_MS = 900;
+const AUTOSAVE_DEBOUNCE_MS = 3000;
 
 type PersistenceStatus = "idle" | "loading" | "saving" | "saved" | "error";
 
@@ -25,6 +25,7 @@ function createProjectFingerprint(projectId: string, updatedAt: string, assetCou
 
 export function useProjectPersistence() {
   const project = useAppStore((state) => state.project);
+  const isCanvasInteractionActive = useAppStore((state) => state.isCanvasInteractionActive);
   const replaceProject = useAppStore((state) => state.replaceProject);
   const [currentProjectPath, setCurrentProjectPath] = useState<string | null>(null);
   const [recentProjects, setRecentProjects] = useState<RecentProjectRecord[]>([]);
@@ -32,6 +33,8 @@ export function useProjectPersistence() {
   const [error, setError] = useState<string | null>(null);
   const [isReady, setIsReady] = useState(false);
   const lastAutosavedFingerprintRef = useRef<string | null>(null);
+  const autosaveProjectSnapshotRef = useRef(project);
+  const autosaveSnapshotFingerprintRef = useRef<string | null>(null);
   const projectRef = useRef(project);
 
   const projectFingerprint = useMemo(
@@ -42,6 +45,15 @@ export function useProjectPersistence() {
   useEffect(() => {
     projectRef.current = project;
   }, [project]);
+
+  useEffect(() => {
+    if (autosaveSnapshotFingerprintRef.current === projectFingerprint) {
+      return;
+    }
+
+    autosaveSnapshotFingerprintRef.current = projectFingerprint;
+    autosaveProjectSnapshotRef.current = project;
+  }, [project, projectFingerprint]);
 
   const refreshRecentProjects = useCallback(async () => {
     if (!hasTauriRuntime()) {
@@ -236,7 +248,7 @@ export function useProjectPersistence() {
   }, [refreshRecentProjects, replaceProjectAndResetAutosave]);
 
   useEffect(() => {
-    if (!hasTauriRuntime() || !isReady) {
+    if (!hasTauriRuntime() || !isReady || isCanvasInteractionActive) {
       return undefined;
     }
 
@@ -244,11 +256,21 @@ export function useProjectPersistence() {
       return undefined;
     }
 
+    const autosaveProject = autosaveProjectSnapshotRef.current;
+    const autosaveFingerprint = projectFingerprint;
     const timeoutId = window.setTimeout(async () => {
+      if (autosaveFingerprint === lastAutosavedFingerprintRef.current) {
+        return;
+      }
+
+      if (appStore.getState().isCanvasInteractionActive) {
+        return;
+      }
+
       try {
         setStatus("saving");
-        await saveAutosaveProject(project, currentProjectPath);
-        lastAutosavedFingerprintRef.current = projectFingerprint;
+        await saveAutosaveProject(autosaveProject, currentProjectPath);
+        lastAutosavedFingerprintRef.current = autosaveFingerprint;
         setError(null);
         setStatus("saved");
       } catch (nextError) {
@@ -258,7 +280,7 @@ export function useProjectPersistence() {
     }, AUTOSAVE_DEBOUNCE_MS);
 
     return () => window.clearTimeout(timeoutId);
-  }, [currentProjectPath, isReady, project, projectFingerprint]);
+  }, [currentProjectPath, isCanvasInteractionActive, isReady, projectFingerprint]);
 
   return {
     currentProjectPath,

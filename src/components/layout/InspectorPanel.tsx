@@ -12,7 +12,7 @@ import {
   SparklesIcon,
 } from "@/components/icons/ui-icons";
 import type { AssetItem } from "@/domain/assets/types";
-import { useRenderableImageUrl } from "@/features/images/hooks/use-renderable-image-url";
+import { AssetThumbnail } from "@/features/images/components/AssetThumbnail";
 import { getProjectDisplayName } from "@/features/project/persistence/project-title";
 import type { RecentProjectRecord } from "@/features/project/persistence/types";
 import { useAppStore } from "@/state/app-store";
@@ -23,12 +23,6 @@ interface InspectorPanelProps {
   onOpenRecentProject: (path: string) => void | Promise<void>;
   onCancelGeneration: (jobId: string) => void;
   onRerunGeneration: (jobId: string) => void | Promise<string | null>;
-}
-
-function InspectorThumb({ src }: { src: string }) {
-  const renderableSrc = useRenderableImageUrl(src);
-
-  return <img alt="" src={renderableSrc} />;
 }
 
 function GenerationJobCard({
@@ -178,7 +172,7 @@ function AssetLayerRow({
         title={asset.sourceName ?? asset.id}
       >
         <span className="asset-layer-row__thumb">
-          <InspectorThumb src={asset.thumbnailPath ?? asset.imagePath} />
+          <AssetThumbnail asset={asset} />
         </span>
         <span className="asset-layer-row__body">
           <strong>{asset.sourceName ?? asset.id}</strong>

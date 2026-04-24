@@ -67,6 +67,7 @@ export interface AssetTransformCommit {
 export interface AppStoreState {
   project: Project;
   isSpacePressed: boolean;
+  isCanvasInteractionActive: boolean;
   toasts: ToastMessage[];
   generationDraft: GenerationSheetDraft;
   uiPreferences: AppUiPreferences;
@@ -90,6 +91,7 @@ export interface AppStoreState {
   selectAssets: (assetIds: string[], options?: SelectionOptions) => void;
   clearSelection: () => void;
   setMarquee: (marquee: Project["selection"]["marquee"]) => void;
+  setAssetThumbnailPath: (assetId: string, thumbnailPath: string) => void;
   setAssetPosition: (assetId: string, position: Point) => void;
   setAssetPositions: (updates: Array<{ id: string; position: Point }>) => void;
   moveAssetsBy: (assetIds: string[], delta: Point) => void;
@@ -143,6 +145,7 @@ export interface AppStoreState {
   clearDiagnosticLogs: () => void;
   pushToast: (toast: { kind: ToastKind; title: string; description?: string }) => string;
   dismissToast: (toastId: string) => void;
+  setCanvasInteractionActive: (active: boolean) => void;
   setSpacePressed: (pressed: boolean) => void;
 }
 
@@ -353,6 +356,7 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
   return createStore<AppStoreState>((set, get) => ({
     project: initialProject,
     isSpacePressed: false,
+    isCanvasInteractionActive: false,
     toasts: [],
     generationDraft: createDefaultGenerationDraft(),
     uiPreferences: getDefaultAppUiPreferences(),
@@ -403,6 +407,31 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
           camera: resizeViewport(state.project.camera, viewportWidth, viewportHeight),
         },
       }));
+    },
+    setAssetThumbnailPath: (assetId, thumbnailPath) => {
+      set((state) => {
+        const asset = state.project.assets[assetId];
+
+        if (!asset || asset.thumbnailPath === thumbnailPath) {
+          return {};
+        }
+
+        const timestamp = new Date().toISOString();
+
+        return {
+          project: bumpProject({
+            ...state.project,
+            assets: {
+              ...state.project.assets,
+              [assetId]: {
+                ...asset,
+                thumbnailPath,
+                updatedAt: timestamp,
+              },
+            },
+          }),
+        };
+      });
     },
     panCameraBy: (deltaX, deltaY) => {
       set((state) => ({
@@ -1406,6 +1435,11 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
       set((state) => ({
         toasts: state.toasts.filter((toast) => toast.id !== toastId),
       }));
+    },
+    setCanvasInteractionActive: (active) => {
+      set({
+        isCanvasInteractionActive: active,
+      });
     },
     setSpacePressed: (pressed) => {
       set({
