@@ -82,6 +82,10 @@ export function mapOpenAiOAuthAvailability(options: {
     return createAvailability("unavailable", "Unavailable", error ?? "OAuth bridge settings failed to load.");
   }
 
+  if (snapshot.oauthStatus === "node_missing") {
+    return createAvailability("unavailable", "Install Node.js", "Node.js 20+ with npm/npx is required for ChatGPT OAuth.");
+  }
+
   if (snapshot.codexAuthStatus === "auth_file_missing") {
     return createAvailability("auth-required", "Log in", "Use Aref login to create local OAuth credentials.");
   }

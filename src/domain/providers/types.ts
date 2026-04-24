@@ -88,7 +88,13 @@ export interface SaveOpenAiSettingsInput {
   baseUrl?: string;
 }
 
-export type Ima2SidecarOAuthStatus = "ready" | "auth_required" | "offline" | "starting" | "unknown";
+export type Ima2SidecarOAuthStatus =
+  | "ready"
+  | "auth_required"
+  | "offline"
+  | "starting"
+  | "unknown"
+  | "node_missing";
 export type CodexAuthStatus = "authed" | "unauthed" | "missing" | "unknown" | "auth_file_missing";
 
 export interface Ima2SidecarSettingsSnapshot {
