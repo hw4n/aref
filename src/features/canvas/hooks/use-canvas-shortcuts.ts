@@ -4,6 +4,7 @@ type CanvasShortcutHandlers = {
   frameAll: () => void;
   frameSelection: () => void;
   centerSelection: () => void;
+  copySelectionToClipboard: () => void | Promise<void>;
   resetZoom: () => void;
   selectAll: () => void;
   duplicateSelection: () => void;
@@ -58,6 +59,9 @@ export function useCanvasShortcuts(handlers: CanvasShortcutHandlers) {
       } else if (event.code === "Digit0") {
         event.preventDefault();
         handlers.resetZoom();
+      } else if ((event.metaKey || event.ctrlKey) && event.code === "KeyC") {
+        event.preventDefault();
+        void handlers.copySelectionToClipboard();
       } else if (event.code === "KeyC") {
         event.preventDefault();
         handlers.centerSelection();

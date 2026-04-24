@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import {
   AlertIcon,
-  BoardIcon,
   CancelIcon,
   CenterSelectionIcon,
   CheckCircleIcon,
@@ -187,59 +186,34 @@ export function LeftSidebar({
     },
   ];
 
-  const activeProviderEntry = providerEntries.find((entry) => entry.active) ?? providerEntries[0] ?? null;
   const orderedAuthMethods = useMemo(
     () => orderProviderAuthMethods(["oauth", "api-key"]),
     [],
   );
   const oauthNodeMissing = ima2SidecarSettings.oauthStatus === "node_missing";
   const oauthNeedsLogin = !oauthNodeMissing && ima2SidecarSettings.codexAuthStatus !== "authed";
-  const oauthNeedsArefLogin = ima2SidecarSettings.codexAuthStatus === "auth_file_missing";
   const oauthReady = ima2SidecarSettings.oauthStatus === "ready";
   const oauthCanStartProxy = shouldManualStartOAuthProxy(ima2SidecarSettings);
   const oauthBusy = ima2SidecarSettingsStatus === "loading"
     || ima2SidecarSettingsStatus === "saving"
     || oauthFlowState === "starting"
     || oauthFlowState === "loginPending";
-  const oauthModels = ima2SidecarSettings.models;
-  const oauthModelSummary = oauthModels.length > 0
-    ? `${oauthModels.slice(0, 3).join(", ")}${oauthModels.length > 3 ? ` +${oauthModels.length - 3}` : ""}`
-    : null;
-  const oauthStatusTitle = oauthReady
-    ? "Ready"
-    : oauthNodeMissing
-      ? "Install Node.js"
-      : oauthNeedsLogin
-      ? "Log in"
-      : "Not ready";
   let oauthPrimaryActionLabel = oauthNodeMissing ? "Install Node.js" : oauthNeedsLogin ? "Log in" : "Check";
-  let oauthStatusMessage = oauthNodeMissing
-    ? "Node.js required."
-    : oauthNeedsLogin
-      ? "Login required."
-      : "Not ready.";
 
   if (oauthReady) {
     oauthPrimaryActionLabel = "Ready";
-    oauthStatusMessage = "Ready.";
   } else if (oauthNodeMissing) {
     oauthPrimaryActionLabel = "Install Node.js";
-    oauthStatusMessage = "Node.js required.";
   } else if (oauthFlowState === "loginPending") {
     oauthPrimaryActionLabel = "Login pending";
-    oauthStatusMessage = "Complete browser login.";
   } else if (oauthFlowState === "starting") {
     oauthPrimaryActionLabel = "Checking";
-    oauthStatusMessage = oauthNeedsLogin ? "Opening login." : "Checking.";
   } else if (ima2SidecarSettingsStatus === "loading") {
     oauthPrimaryActionLabel = "Checking";
-    oauthStatusMessage = "Checking.";
   } else if (oauthNeedsLogin) {
     oauthPrimaryActionLabel = "Log in";
-    oauthStatusMessage = oauthNeedsArefLogin ? "Aref login required." : "Login required.";
   } else if (ima2SidecarSettings.oauthStatus === "starting") {
     oauthPrimaryActionLabel = "Checking";
-    oauthStatusMessage = "Checking.";
   }
 
   useEffect(() => {
@@ -684,12 +658,6 @@ export function LeftSidebar({
           <div className="settings-surface">
             <div className="settings-surface__tabs">
               <SettingTabButton
-                active={uiPreferences.settingsSection === "general"}
-                icon={<BoardIcon size={14} />}
-                label="General"
-                onClick={() => handleOpenSettings("general")}
-              />
-              <SettingTabButton
                 active={uiPreferences.settingsSection === "providers"}
                 icon={<SourceIcon size={14} />}
                 label="Providers"
@@ -702,14 +670,6 @@ export function LeftSidebar({
                 onClick={() => handleOpenSettings("developer")}
               />
             </div>
-
-            {uiPreferences.settingsSection === "general" ? (
-              <div className="settings-surface__content">
-                <div className="settings-note">
-                  <strong>Provider:</strong> <span>{activeProviderEntry?.label || "None"}</span>
-                </div>
-              </div>
-            ) : null}
 
             {uiPreferences.settingsSection === "providers" ? (
               <div className="settings-surface__content">
@@ -729,20 +689,16 @@ export function LeftSidebar({
 
                 {openAiAuthMethod === "oauth" ? (
                   <>
-                    <section className="oauth-card">
-                      <strong>{oauthStatusTitle}</strong>
-                      <p>{oauthStatusMessage}</p>
-                      {oauthReady && oauthModelSummary ? <p>Models: {oauthModelSummary}</p> : null}
-
+                    {oauthReady ? null : (
                       <button
                         className="settings-action settings-action--primary"
-                        disabled={!isDesktopIma2SidecarAvailable || oauthBusy || oauthReady || oauthNodeMissing}
+                        disabled={!isDesktopIma2SidecarAvailable || oauthBusy || oauthNodeMissing}
                         onClick={() => void handlePrepareIma2OAuth()}
                       >
                         <SparklesIcon size={14} />
                         <span>{oauthPrimaryActionLabel}</span>
                       </button>
-                    </section>
+                    )}
 
                     {uiPreferences.developerMode ? (
                       <details className="settings-advanced">

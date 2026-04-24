@@ -334,6 +334,7 @@ fn compose_prompt(prompt: &str, negative_prompt: Option<&str>) -> String {
 
 fn aspect_ratio_to_openai_size(aspect_ratio: &str) -> (&'static str, u32, u32) {
     match aspect_ratio {
+        "unspecified" => ("auto", 1024, 1024),
         "4:3" => ("1536x1024", 1536, 1024),
         "3:4" => ("1024x1536", 1024, 1536),
         "16:9" => ("1792x1024", 1792, 1024),
@@ -957,7 +958,7 @@ mod tests {
     fn maps_canvas_aspect_ratios_to_openai_sizes() {
         assert_eq!(
             aspect_ratio_to_openai_size("unspecified"),
-            ("1024x1024", 1024, 1024)
+            ("auto", 1024, 1024)
         );
         assert_eq!(
             aspect_ratio_to_openai_size("1:1"),

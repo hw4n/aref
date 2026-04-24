@@ -144,7 +144,7 @@ mod tests {
 
     #[test]
     fn maps_chatgpt_oauth_log_lines_with_multiple_request_ids() {
-        let raw = r#"{"timestamp":"2026-04-23T12:00:00Z","operationId":"op-2","requestId":"job-2","openaiRequestIds":["req-a","req-b"],"model":"gpt-5.4","mode":"edit","status":"succeeded","referenceCount":1,"imageCount":2,"promptLength":44,"proxyManaged":true}"#;
+        let raw = r#"{"timestamp":"2026-04-23T12:00:00Z","operationId":"op-2","requestId":"job-2","openaiRequestIds":["req-a","req-b"],"model":"gpt-5.5","mode":"edit","status":"succeeded","referenceCount":1,"imageCount":2,"promptLength":44,"proxyManaged":true}"#;
         let entry = map_log_line("ima2-sidecar", raw).expect("entry should parse");
 
         assert_eq!(entry.provider, "ima2-sidecar");

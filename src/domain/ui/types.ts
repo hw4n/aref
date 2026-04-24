@@ -1,4 +1,8 @@
-import type { GenerationAspectRatio } from "@/domain/jobs/types";
+import type {
+  GenerationAspectRatio,
+  GenerationImageQuality,
+  GenerationModeration,
+} from "@/domain/jobs/types";
 import type { ProviderAuthMethod, ProviderFamilyId } from "@/domain/providers/types";
 import type { ID } from "@/domain/shared/types";
 
@@ -10,6 +14,8 @@ export interface GenerationSheetDraft {
   settings: {
     imageCount: number;
     aspectRatio: GenerationAspectRatio;
+    quality: GenerationImageQuality;
+    moderation: GenerationModeration;
   };
   pinnedAssetIds: ID[] | null;
   isExplicitlyOpened: boolean;
@@ -21,7 +27,7 @@ export interface VisibilityHistoryEntry {
   nextHiddenById: Record<ID, boolean>;
 }
 
-export type SettingsSurfaceSection = "general" | "providers" | "developer";
+export type SettingsSurfaceSection = "providers" | "developer";
 export type DiagnosticLogLevel = "info" | "warning" | "error";
 export type DiagnosticLogScope = "provider" | "auth" | "generation" | "system";
 

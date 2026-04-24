@@ -1,6 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 
-import type { GenerationJobStatus } from "@/domain/jobs/types";
+import type {
+  GenerationImageQuality,
+  GenerationJobStatus,
+  GenerationModeration,
+} from "@/domain/jobs/types";
 import type {
   Ima2SidecarLoginLaunchSnapshot,
   Ima2SidecarSettingsSnapshot,
@@ -21,10 +25,11 @@ export interface StartIma2SidecarGenerationInput {
   jobId: string;
   prompt: string;
   negativePrompt?: string;
-  model: string;
   settings: {
     imageCount: number;
     aspectRatio: string;
+    quality: GenerationImageQuality;
+    moderation: GenerationModeration;
   };
   referenceImages: Ima2SidecarReferenceImagePayload[];
 }

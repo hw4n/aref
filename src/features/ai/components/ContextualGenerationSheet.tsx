@@ -16,7 +16,12 @@ import {
   SparklesIcon,
 } from "@/components/icons/ui-icons";
 import type { AssetItem } from "@/domain/assets/types";
-import type { GenerationAspectRatio, GenerationRequest } from "@/domain/jobs/types";
+import type {
+  GenerationAspectRatio,
+  GenerationImageQuality,
+  GenerationModeration,
+  GenerationRequest,
+} from "@/domain/jobs/types";
 import type { GenerationProviderAdapter } from "@/domain/providers/types";
 import { useRenderableImageUrl } from "@/features/images/hooks/use-renderable-image-url";
 import { useAppStore } from "@/state/app-store";
@@ -29,6 +34,9 @@ function ReferenceThumb({ src }: { src: string }) {
 }
 
 const ASPECT_RATIO_OPTIONS: GenerationAspectRatio[] = ["unspecified", "1:1", "4:3", "3:4", "16:9", "9:16"];
+const QUALITY_OPTIONS: GenerationImageQuality[] = ["low", "medium", "high"];
+const MODERATION_OPTIONS: GenerationModeration[] = ["low", "auto"];
+const COUNT_OPTIONS = [1, 2, 4];
 
 function getAspectRatioLabel(aspectRatio: GenerationAspectRatio) {
   if (aspectRatio === "unspecified") {
@@ -95,6 +103,7 @@ export function ContextualGenerationSheet({
   const allSelectedLocked = selectedAssets.length > 0 && selectedAssets.every((asset) => asset.locked);
   const allSelectedHidden = selectedAssets.length > 0 && selectedAssets.every((asset) => asset.hidden);
   const canSubmitGeneration = generationDraft.prompt.trim().length > 0 && Boolean(activeProvider);
+  const isOAuthProvider = activeProvider?.id === "ima2-sidecar";
 
   const handleRemoveReference = (assetId: string) => {
     const sourceIds = generationDraft.pinnedAssetIds ?? referenceAssetIds;
@@ -117,7 +126,7 @@ export function ContextualGenerationSheet({
       prompt: generationDraft.prompt,
       negativePrompt: generationDraft.negativePrompt,
       provider: activeProvider.id,
-      model: generationDraft.model,
+      model: isOAuthProvider ? activeProvider.defaultModel : generationDraft.model,
       settings: generationDraft.settings,
     });
   };
@@ -136,7 +145,7 @@ export function ContextualGenerationSheet({
         {activeProvider ? (
           <div className="inspector-panel__sheet-pills">
             <span>{activeProvider.label}</span>
-            <span>{generationDraft.model}</span>
+            {isOAuthProvider ? null : <span>{generationDraft.model}</span>}
             <span>{hasReferences ? `${referenceAssets.length} refs` : "Prompt only"}</span>
             {isPinnedReferenceSet ? <span>Pinned refs</span> : <span>Live selection</span>}
             {isPinnedReferenceSet ? (
@@ -266,26 +275,69 @@ export function ContextualGenerationSheet({
           </label>
 
           <div className="inspector-panel__form-grid">
-            <label className="inspector-panel__field">
-              <span>Model</span>
-              <select
-                value={generationDraft.model}
-                onChange={(event) => setGenerationDraft({ model: event.currentTarget.value })}
-              >
-                {(activeProvider?.models ?? []).map((model) => (
-                  <option key={model.id} value={model.id}>
-                    {model.label}
-                  </option>
-                ))}
-              </select>
-            </label>
+            {isOAuthProvider ? null : (
+              <label className="inspector-panel__field">
+                <span>Model</span>
+                <select
+                  value={generationDraft.model}
+                  onChange={(event) => setGenerationDraft({ model: event.currentTarget.value })}
+                >
+                  {(activeProvider?.models ?? []).map((model) => (
+                    <option key={model.id} value={model.id}>
+                      {model.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+
+            {isOAuthProvider ? (
+              <>
+                <label className="inspector-panel__field">
+                  <span>Quality</span>
+                  <select
+                    value={generationDraft.settings.quality}
+                    onChange={(event) =>
+                      setGenerationDraft({
+                        settings: {
+                          quality: event.currentTarget.value as GenerationImageQuality,
+                        },
+                      })
+                    }
+                  >
+                    {QUALITY_OPTIONS.map((quality) => (
+                      <option key={quality} value={quality}>
+                        {quality}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="inspector-panel__field">
+                  <span>Moderation</span>
+                  <select
+                    value={generationDraft.settings.moderation}
+                    onChange={(event) =>
+                      setGenerationDraft({
+                        settings: {
+                          moderation: event.currentTarget.value as GenerationModeration,
+                        },
+                      })
+                    }
+                  >
+                    {MODERATION_OPTIONS.map((moderation) => (
+                      <option key={moderation} value={moderation}>
+                        {moderation}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </>
+            ) : null}
 
             <label className="inspector-panel__field">
               <span>Count</span>
-              <input
-                max={4}
-                min={1}
-                type="number"
+              <select
                 value={generationDraft.settings.imageCount}
                 onChange={(event) =>
                   setGenerationDraft({
@@ -294,7 +346,13 @@ export function ContextualGenerationSheet({
                     },
                   })
                 }
-              />
+              >
+                {COUNT_OPTIONS.map((count) => (
+                  <option key={count} value={count}>
+                    {count}
+                  </option>
+                ))}
+              </select>
             </label>
 
             <label className="inspector-panel__field inspector-panel__field--span">

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Konva from "konva";
 import { Circle, Group, Image as KonvaImage, Layer, Rect, Stage, Text, Transformer } from "react-konva";
 
@@ -28,6 +28,7 @@ import { normalizeRect, rectsIntersect } from "@/domain/shared/geometry";
 import type { Point } from "@/domain/shared/types";
 import { useCanvasShortcuts } from "@/features/canvas/hooks/use-canvas-shortcuts";
 import { useStageContainerSize } from "@/features/canvas/hooks/use-stage-container-size";
+import { copyAssetsToClipboard } from "@/features/canvas/utils/selection-clipboard";
 import {
   ROTATION_SNAP_TOLERANCE_DEGREES,
   getRotationSnapAngles,
@@ -468,11 +469,41 @@ export function CanvasStage() {
   const redoVisibilityChange = useAppStore((state) => state.redoVisibilityChange);
   const zoomCameraAtPoint = useAppStore((state) => state.zoomCameraAtPoint);
   const isSpacePressed = useAppStore((state) => state.isSpacePressed);
+  const pushToast = useAppStore((state) => state.pushToast);
+
+  const copySelectionToClipboard = useCallback(async () => {
+    const selectedAssets = assets.filter((asset) => selectedAssetIds.includes(asset.id));
+
+    if (selectedAssets.length === 0) {
+      return;
+    }
+
+    try {
+      const copiedCount = await copyAssetsToClipboard(selectedAssets);
+
+      if (copiedCount === 0) {
+        return;
+      }
+
+      pushToast({
+        kind: "success",
+        title: copiedCount === 1 ? "Copied image" : "Copied selection",
+        description: copiedCount === 1 ? "Image PNG is on the clipboard." : `${copiedCount} items rendered as one PNG.`,
+      });
+    } catch (error) {
+      pushToast({
+        kind: "error",
+        title: "Copy failed",
+        description: error instanceof Error ? error.message : "Could not copy the selection.",
+      });
+    }
+  }, [assets, pushToast, selectedAssetIds]);
 
   useCanvasShortcuts({
     frameAll,
     frameSelection,
     centerSelection,
+    copySelectionToClipboard,
     resetZoom,
     selectAll,
     duplicateSelection,

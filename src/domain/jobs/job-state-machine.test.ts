@@ -18,6 +18,8 @@ const request: GenerationRequest = {
   settings: {
     imageCount: 1,
     aspectRatio: "1:1",
+    quality: "medium",
+    moderation: "low",
   },
 };
 

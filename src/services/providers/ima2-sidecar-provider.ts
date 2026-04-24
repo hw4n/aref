@@ -17,6 +17,7 @@ import {
 } from "@/features/ai/ima2-sidecar/ima2-sidecar-runtime";
 
 const IMA2_SIDECAR_POLL_INTERVAL_MS = 650;
+const IMA2_SIDECAR_MODEL = "gpt-5.5";
 const SIDE_CAR_SUPPORTED_REFERENCE_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
 
 const EXTENSION_TO_MIME_TYPE: Record<string, string> = {
@@ -149,9 +150,9 @@ async function readReferenceImagePayload(
 export const ima2SidecarGenerationProvider: OneShotGenerationProviderAdapter = {
   id: "ima2-sidecar",
   label: "ChatGPT OAuth",
-  defaultModel: "gpt-5.4",
+  defaultModel: IMA2_SIDECAR_MODEL,
   flowKind: "one-shot",
-  models: [{ id: "gpt-5.4", label: "GPT-5.4 + image_generation" }],
+  models: [{ id: IMA2_SIDECAR_MODEL, label: "GPT-5.5 + image_generation" }],
   async generateImages(invocation, options): Promise<GenerationProviderResult> {
     if (!hasTauriRuntime()) {
       throw new Error("ChatGPT OAuth generation is only available in the desktop app.");
@@ -169,7 +170,6 @@ export const ima2SidecarGenerationProvider: OneShotGenerationProviderAdapter = {
       jobId: invocation.jobId,
       prompt: invocation.request.prompt,
       negativePrompt: invocation.request.negativePrompt,
-      model: invocation.request.model,
       settings: invocation.request.settings,
       referenceImages,
     });
@@ -198,7 +198,7 @@ export const ima2SidecarGenerationProvider: OneShotGenerationProviderAdapter = {
         if (snapshot.status === "succeeded") {
           return {
             provider: this.id,
-            model: invocation.request.model,
+            model: IMA2_SIDECAR_MODEL,
             completedAt: snapshot.completedAt ?? new Date().toISOString(),
             requestId: snapshot.requestId ?? null,
             mode:

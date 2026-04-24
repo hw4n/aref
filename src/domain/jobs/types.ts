@@ -8,10 +8,14 @@ export type GenerationJobStatus =
   | "cancelled";
 
 export type GenerationAspectRatio = "unspecified" | "1:1" | "4:3" | "3:4" | "16:9" | "9:16";
+export type GenerationImageQuality = "low" | "medium" | "high";
+export type GenerationModeration = "low" | "auto";
 
 export interface GenerationSettings {
   imageCount: number;
   aspectRatio: GenerationAspectRatio;
+  quality: GenerationImageQuality;
+  moderation: GenerationModeration;
 }
 
 export interface GenerationRequest {

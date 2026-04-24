@@ -712,7 +712,7 @@ button:disabled {
 
 .settings-surface__tabs {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
 }
 
@@ -757,24 +757,6 @@ button:disabled {
 .settings-error {
   margin: 0;
   color: var(--danger);
-  font-size: 0.76rem;
-}
-
-.oauth-card {
-  display: grid;
-  gap: 10px;
-  padding: 0.85rem;
-  border: 1px solid rgba(127, 150, 255, 0.28);
-  background: linear-gradient(135deg, rgba(127, 150, 255, 0.12), rgba(255, 255, 255, 0.025));
-}
-
-.oauth-card > strong {
-  font-size: 0.9rem;
-}
-
-.oauth-card > p {
-  margin: 0;
-  color: var(--text-muted);
   font-size: 0.76rem;
 }
 

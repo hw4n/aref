@@ -200,10 +200,12 @@ function createDefaultGenerationDraft(): GenerationSheetDraft {
     prompt: "",
     negativePrompt: "",
     provider: "ima2-sidecar",
-    model: "gpt-5.4",
+    model: "gpt-5.5",
     settings: {
       imageCount: 1,
       aspectRatio: "unspecified",
+      quality: "medium",
+      moderation: "low",
     },
     pinnedAssetIds: null,
     isExplicitlyOpened: false,

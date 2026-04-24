@@ -36,10 +36,12 @@ const baseInvocation: GenerationProviderInvocation = {
     selectedAssetIds: [],
     prompt: "A quiet alley at dawn",
     provider: "ima2-sidecar",
-    model: "gpt-5.4",
+    model: "gpt-5.5",
     settings: {
       imageCount: 2,
       aspectRatio: "1:1",
+      quality: "high",
+      moderation: "auto",
     },
   },
   referenceAssets: [],
@@ -99,17 +101,18 @@ describe("ima2 sidecar generation provider", () => {
       jobId: "job-sidecar-1",
       prompt: "A quiet alley at dawn",
       negativePrompt: undefined,
-      model: "gpt-5.4",
       settings: {
         imageCount: 2,
         aspectRatio: "1:1",
+        quality: "high",
+        moderation: "auto",
       },
       referenceImages: [],
     });
     expect(onStatusChange).toHaveBeenCalledWith("running");
     expect(result).toMatchObject({
       provider: "ima2-sidecar",
-      model: "gpt-5.4",
+      model: "gpt-5.5",
       requestId: "job-sidecar-1",
       mode: "generate",
     });
@@ -147,6 +150,8 @@ describe("ima2 sidecar generation provider", () => {
           settings: {
             imageCount: 1,
             aspectRatio: "4:3",
+            quality: "low",
+            moderation: "low",
           },
         },
         referenceAssets: [

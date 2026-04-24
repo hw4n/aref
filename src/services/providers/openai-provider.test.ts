@@ -40,6 +40,8 @@ const baseInvocation: GenerationProviderInvocation = {
     settings: {
       imageCount: 2,
       aspectRatio: "1:1",
+      quality: "medium",
+      moderation: "low",
     },
   },
   referenceAssets: [],
@@ -103,6 +105,8 @@ describe("openai generation provider", () => {
       settings: {
         imageCount: 2,
         aspectRatio: "1:1",
+        quality: "medium",
+        moderation: "low",
       },
       referenceImages: [],
     });
@@ -146,6 +150,8 @@ describe("openai generation provider", () => {
           settings: {
             imageCount: 1,
             aspectRatio: "4:3",
+            quality: "medium",
+            moderation: "low",
           },
         },
         referenceAssets: [

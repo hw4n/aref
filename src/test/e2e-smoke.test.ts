@@ -40,6 +40,8 @@ describe("release smoke flow", () => {
       settings: {
         imageCount: 1,
         aspectRatio: "1:1" as const,
+        quality: "medium" as const,
+        moderation: "low" as const,
       },
     };
     const jobId = store.getState().queueGenerationJob(request);

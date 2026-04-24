@@ -39,6 +39,7 @@ const CODEX_LOGIN_STATUS_TIMEOUT_MILLISECONDS: u64 = 2_500;
 const HIDDEN_COMMAND_POLL_MILLISECONDS: u64 = 50;
 const OPENAI_OAUTH_PACKAGE: &str = "openai-oauth@1.0.2";
 const OPENAI_OAUTH_FALLBACK_CODEX_VERSION: &str = "0.124.0";
+const OAUTH_IMAGE_MODEL: &str = "gpt-5.5";
 const OAUTH_IMAGE_DEVELOPER_PROMPT: &str =
     "You are an image generator for a desktop reference-board app. Always use the image_generation tool and do not return a text-only answer. Generate exactly one image that follows the user's prompt and references.";
 
@@ -135,7 +136,6 @@ pub struct StartIma2SidecarGenerationRequest {
     job_id: String,
     prompt: String,
     negative_prompt: Option<String>,
-    model: String,
     settings: Ima2SidecarGenerationSettings,
     reference_images: Vec<Ima2SidecarReferenceImage>,
 }
@@ -145,6 +145,8 @@ pub struct StartIma2SidecarGenerationRequest {
 pub struct Ima2SidecarGenerationSettings {
     image_count: u32,
     aspect_ratio: String,
+    quality: Option<String>,
+    moderation: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -344,6 +346,7 @@ fn compose_prompt(prompt: &str, negative_prompt: Option<&str>) -> String {
 
 fn aspect_ratio_to_ima2_size(aspect_ratio: &str) -> (&'static str, u32, u32) {
     match aspect_ratio {
+        "unspecified" => ("auto", 1024, 1024),
         "4:3" => ("1536x1024", 1536, 1024),
         "3:4" => ("1024x1536", 1024, 1536),
         "16:9" => ("1792x1024", 1792, 1024),
@@ -867,12 +870,51 @@ fn extract_oauth_model_ids(payload: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
+fn normalize_oauth_image_quality(value: Option<&str>) -> &'static str {
+    match value.map(str::trim) {
+        Some("low") => "low",
+        Some("high") => "high",
+        Some("medium") => "medium",
+        _ => "medium",
+    }
+}
+
+fn normalize_oauth_image_moderation(value: Option<&str>) -> &'static str {
+    match value.map(str::trim) {
+        Some("auto") => "auto",
+        Some("low") => "low",
+        _ => "low",
+    }
+}
+
+fn normalize_oauth_image_count(value: u32) -> u32 {
+    value.clamp(1, 4)
+}
+
 fn build_oauth_request_body(
     request: &StartIma2SidecarGenerationRequest,
     prompt: &str,
     size: &str,
     stream: bool,
 ) -> Value {
+    let quality = normalize_oauth_image_quality(request.settings.quality.as_deref());
+    let moderation = normalize_oauth_image_moderation(request.settings.moderation.as_deref());
+    let is_edit = request.reference_images.len() == 1;
+    let mut tools = Vec::new();
+
+    if stream && !is_edit {
+        tools.push(json!({
+            "type": "web_search",
+        }));
+    }
+
+    tools.push(json!({
+        "type": "image_generation",
+        "quality": quality,
+        "size": size,
+        "moderation": moderation
+    }));
+
     let mut user_content = vec![json!({
         "type": "input_text",
         "text": prompt,
@@ -886,11 +928,7 @@ fn build_oauth_request_body(
     }));
 
     json!({
-        "model": if request.model.trim().is_empty() {
-            "gpt-5.4"
-        } else {
-            request.model.as_str()
-        },
+        "model": OAUTH_IMAGE_MODEL,
         "input": [
             {
                 "role": "developer",
@@ -901,14 +939,8 @@ fn build_oauth_request_body(
                 "content": user_content
             }
         ],
-        "tools": [
-            {
-                "type": "image_generation",
-                "quality": "medium",
-                "size": size
-            }
-        ],
-        "tool_choice": "auto",
+        "tools": tools,
+        "tool_choice": if is_edit { "required" } else { "auto" },
         "stream": stream
     })
 }
@@ -1742,10 +1774,11 @@ async fn execute_ima2_sidecar_request(
     let (size, width, height) = aspect_ratio_to_ima2_size(&request.settings.aspect_ratio);
     let prompt = compose_prompt(&request.prompt, request.negative_prompt.as_deref());
     let output_directory = ima2_sidecar_generated_directory(app)?;
-    let mut images = Vec::with_capacity(request.settings.image_count as usize);
-    let mut request_ids = Vec::with_capacity(request.settings.image_count as usize);
+    let image_count = normalize_oauth_image_count(request.settings.image_count);
+    let mut images = Vec::with_capacity(image_count as usize);
+    let mut request_ids = Vec::with_capacity(image_count as usize);
 
-    for index in 0..request.settings.image_count {
+    for index in 0..image_count {
         let (request_id, payload) =
             execute_single_oauth_request(&client, base_url, request, &prompt, size, &mut cancel_rx)
                 .await?;
@@ -1796,7 +1829,7 @@ async fn run_ima2_sidecar_operation(
             operation_id: operation_id.clone(),
             request_id: request.job_id.clone(),
             openai_request_ids: Vec::new(),
-            model: request.model.clone(),
+            model: OAUTH_IMAGE_MODEL.to_string(),
             mode: mode.clone(),
             base_url: base_url.clone(),
             status: "running".to_string(),
@@ -1831,7 +1864,7 @@ async fn run_ima2_sidecar_operation(
                         operation_id,
                         request_id: request.job_id,
                         openai_request_ids: request_ids,
-                        model: request.model,
+                        model: OAUTH_IMAGE_MODEL.to_string(),
                         mode,
                         base_url,
                         status: "cancelled".to_string(),
@@ -1863,7 +1896,7 @@ async fn run_ima2_sidecar_operation(
                     operation_id,
                     request_id: request.job_id,
                     openai_request_ids: request_ids,
-                    model: request.model,
+                    model: OAUTH_IMAGE_MODEL.to_string(),
                     mode,
                     base_url,
                     status: "succeeded".to_string(),
@@ -1892,7 +1925,7 @@ async fn run_ima2_sidecar_operation(
                     operation_id,
                     request_id: request.job_id,
                     openai_request_ids: Vec::new(),
-                    model: request.model,
+                    model: OAUTH_IMAGE_MODEL.to_string(),
                     mode,
                     base_url,
                     status: "cancelled".to_string(),
@@ -1921,7 +1954,7 @@ async fn run_ima2_sidecar_operation(
                     operation_id,
                     request_id: request.job_id,
                     openai_request_ids: Vec::new(),
-                    model: request.model,
+                    model: OAUTH_IMAGE_MODEL.to_string(),
                     mode,
                     base_url,
                     status: "failed".to_string(),
@@ -2059,7 +2092,7 @@ pub async fn start_ima2_sidecar_generation(
             operation_id: operation_id.clone(),
             request_id: request.job_id.clone(),
             openai_request_ids: Vec::new(),
-            model: request.model.clone(),
+            model: OAUTH_IMAGE_MODEL.to_string(),
             mode: if request.reference_images.len() == 1 {
                 "edit".to_string()
             } else {
@@ -2193,7 +2226,7 @@ mod tests {
     fn maps_canvas_aspect_ratios_to_oauth_proxy_sizes() {
         assert_eq!(
             aspect_ratio_to_ima2_size("unspecified"),
-            ("1024x1024", 1024, 1024)
+            ("auto", 1024, 1024)
         );
         assert_eq!(aspect_ratio_to_ima2_size("1:1"), ("1024x1024", 1024, 1024));
         assert_eq!(aspect_ratio_to_ima2_size("4:3"), ("1536x1024", 1536, 1024));
@@ -2324,14 +2357,14 @@ mod tests {
         fs::create_dir_all(&auth_env.codex_home).expect("codex dir");
         fs::write(
             auth_env.codex_home.join("config.toml"),
-            "model = \"gpt-5.4\"\ncli_auth_credentials_store = \"auto\"\n",
+            "model = \"gpt-5.5\"\ncli_auth_credentials_store = \"auto\"\n",
         )
         .expect("seed config");
 
         ensure_codex_file_credentials_config(&auth_env).expect("config should be rewritten");
         let contents =
             fs::read_to_string(auth_env.codex_home.join("config.toml")).expect("config readable");
-        assert!(contents.contains("model = \"gpt-5.4\""));
+        assert!(contents.contains("model = \"gpt-5.5\""));
         assert!(contents.contains("cli_auth_credentials_store = \"file\""));
         assert!(!contents.contains("cli_auth_credentials_store = \"auto\""));
 
@@ -2482,6 +2515,61 @@ mod tests {
             extract_oauth_model_ids(&payload),
             vec!["gpt-5.2".to_string(), "gpt-5.1-codex".to_string()]
         );
+    }
+
+    #[test]
+    fn builds_oauth_request_body_with_image_parameters() {
+        let request = StartIma2SidecarGenerationRequest {
+            job_id: "job-1".to_string(),
+            prompt: "prompt".to_string(),
+            negative_prompt: None,
+            settings: Ima2SidecarGenerationSettings {
+                image_count: 2,
+                aspect_ratio: "1:1".to_string(),
+                quality: Some("high".to_string()),
+                moderation: Some("auto".to_string()),
+            },
+            reference_images: Vec::new(),
+        };
+
+        let body = build_oauth_request_body(&request, "prompt", "1024x1024", true);
+
+        assert_eq!(body["model"], OAUTH_IMAGE_MODEL);
+        assert_eq!(body["tool_choice"], "auto");
+        assert_eq!(body["tools"][0]["type"], "web_search");
+        assert_eq!(body["tools"][1]["type"], "image_generation");
+        assert_eq!(body["tools"][1]["quality"], "high");
+        assert_eq!(body["tools"][1]["moderation"], "auto");
+        assert_eq!(body["tools"][1]["size"], "1024x1024");
+    }
+
+    #[test]
+    fn builds_oauth_edit_request_body_without_search_tool() {
+        let request = StartIma2SidecarGenerationRequest {
+            job_id: "job-2".to_string(),
+            prompt: "prompt".to_string(),
+            negative_prompt: None,
+            settings: Ima2SidecarGenerationSettings {
+                image_count: 1,
+                aspect_ratio: "4:3".to_string(),
+                quality: Some("unknown".to_string()),
+                moderation: Some("unknown".to_string()),
+            },
+            reference_images: vec![Ima2SidecarReferenceImage {
+                _filename: "ref.png".to_string(),
+                mime_type: "image/png".to_string(),
+                bytes: vec![1, 2, 3],
+            }],
+        };
+
+        let body = build_oauth_request_body(&request, "prompt", "1536x1024", true);
+
+        assert_eq!(body["model"], OAUTH_IMAGE_MODEL);
+        assert_eq!(body["tool_choice"], "required");
+        assert_eq!(body["tools"].as_array().expect("tools array").len(), 1);
+        assert_eq!(body["tools"][0]["type"], "image_generation");
+        assert_eq!(body["tools"][0]["quality"], "medium");
+        assert_eq!(body["tools"][0]["moderation"], "low");
     }
 
     #[test]

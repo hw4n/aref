@@ -14,6 +14,8 @@ const baseInvocation: GenerationProviderInvocation = {
     settings: {
       imageCount: 2,
       aspectRatio: "1:1",
+      quality: "medium",
+      moderation: "low",
     },
   },
   referenceAssets: [],
@@ -58,6 +60,8 @@ describe("mock generation provider", () => {
           settings: {
             imageCount: 1,
             aspectRatio: "16:9",
+            quality: "medium",
+            moderation: "low",
           },
         },
       },
@@ -74,6 +78,8 @@ describe("mock generation provider", () => {
           settings: {
             imageCount: 1,
             aspectRatio: "9:16",
+            quality: "medium",
+            moderation: "low",
           },
         },
       },

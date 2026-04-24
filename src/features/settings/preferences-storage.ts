@@ -17,7 +17,7 @@ export function getDefaultAppUiPreferences(): AppUiPreferences {
     inspectorOpen: false,
     inspectorWidth: DEFAULT_INSPECTOR_WIDTH,
     generationSheetWidth: DEFAULT_GENERATION_SHEET_WIDTH,
-    settingsSection: "general",
+    settingsSection: "providers",
     developerMode: false,
     logsVisible: false,
     mockProviderEnabled: false,
@@ -40,7 +40,6 @@ export function normalizeAppUiPreferences(input: Partial<AppUiPreferences> | nul
     settingsSection:
       nextPreferences.settingsSection === "providers"
       || nextPreferences.settingsSection === "developer"
-      || nextPreferences.settingsSection === "general"
         ? nextPreferences.settingsSection
         : defaults.settingsSection,
     developerMode: nextPreferences.developerMode ?? defaults.developerMode,
