@@ -26,6 +26,7 @@ const DEFAULT_IMA2_SIDECAR_BASE_URL: &str = "http://127.0.0.1:10531";
 const IMA2_SIDECAR_SETTINGS_FILENAME: &str = "ima2-sidecar-settings.json";
 const IMA2_SIDECAR_REQUEST_LOG_FILENAME: &str = "ima2-sidecar-requests.jsonl";
 const IMA2_SIDECAR_GENERATED_DIRECTORY: &str = "ima2-sidecar-generated";
+const IMA2_SIDECAR_CODEX_HOME_DIRECTORY: &str = "ima2-codex-home";
 const IMA2_SIDECAR_REQUEST_TIMEOUT_SECONDS: u64 = 240;
 const IMA2_SIDECAR_HEALTH_TIMEOUT_SECONDS: u64 = 3;
 const IMA2_SIDECAR_PROXY_WARMUP_MILLISECONDS: u64 = 900;
@@ -55,6 +56,11 @@ struct Ima2SidecarOperationEntry {
 struct ManagedIma2Proxy {
     child: Child,
     base_url: String,
+}
+
+struct CodexAuthDetection {
+    status: String,
+    auth_file: Option<PathBuf>,
 }
 
 impl Drop for ManagedIma2Proxy {
@@ -237,6 +243,46 @@ fn ima2_sidecar_generated_directory(app: &AppHandle) -> Result<PathBuf, String> 
     Ok(directory)
 }
 
+fn managed_codex_home_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    let directory = app_config_dir(app)?.join(IMA2_SIDECAR_CODEX_HOME_DIRECTORY);
+    fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+    Ok(directory)
+}
+
+fn ensure_managed_codex_file_auth_config(app: &AppHandle) -> Result<PathBuf, String> {
+    let codex_home = managed_codex_home_dir(app)?;
+    let config_path = codex_home.join("config.toml");
+    let file_store_config = "cli_auth_credentials_store = \"file\"";
+
+    if config_path.exists() {
+        let contents = fs::read_to_string(&config_path).map_err(|error| error.to_string())?;
+        let mut found_setting = false;
+        let mut next_lines = Vec::new();
+
+        for line in contents.lines() {
+            if line.trim_start().starts_with("cli_auth_credentials_store") {
+                found_setting = true;
+                next_lines.push(file_store_config.to_string());
+            } else {
+                next_lines.push(line.to_string());
+            }
+        }
+
+        if !found_setting {
+            next_lines.push(file_store_config.to_string());
+        }
+
+        let mut next_contents = next_lines.join("\n");
+        next_contents.push('\n');
+        fs::write(config_path, next_contents).map_err(|error| error.to_string())?;
+    } else {
+        fs::write(config_path, format!("{file_store_config}\n"))
+            .map_err(|error| error.to_string())?;
+    }
+
+    Ok(codex_home)
+}
+
 fn read_stored_ima2_sidecar_settings(
     app: &AppHandle,
 ) -> Result<Option<StoredIma2SidecarSettings>, String> {
@@ -391,8 +437,14 @@ fn user_home_dir() -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
-fn codex_auth_paths() -> Vec<PathBuf> {
+fn codex_auth_paths(app: Option<&AppHandle>) -> Vec<PathBuf> {
     let mut paths = Vec::new();
+
+    if let Some(app) = app {
+        if let Ok(codex_home) = managed_codex_home_dir(app) {
+            paths.push(codex_home.join("auth.json"));
+        }
+    }
 
     if let Some(codex_home) = codex_home_dir() {
         paths.push(codex_home.join("auth.json"));
@@ -406,8 +458,8 @@ fn codex_auth_paths() -> Vec<PathBuf> {
     paths
 }
 
-fn has_codex_auth_file() -> bool {
-    codex_auth_paths().iter().any(|path| path.exists())
+fn find_codex_auth_file(app: Option<&AppHandle>) -> Option<PathBuf> {
+    codex_auth_paths(app).into_iter().find(|path| path.exists())
 }
 
 fn codex_binary_candidates() -> &'static [&'static str] {
@@ -491,19 +543,28 @@ fn probe_codex_login_status() -> String {
     "missing".to_string()
 }
 
-fn detect_codex_auth_status() -> String {
-    let has_auth_file = has_codex_auth_file();
+fn detect_codex_auth(app: Option<&AppHandle>) -> CodexAuthDetection {
+    let auth_file = find_codex_auth_file(app);
     let probe = probe_codex_login_status();
 
-    if has_auth_file || probe == "authed" {
-        return "authed".to_string();
+    if auth_file.is_some() {
+        return CodexAuthDetection {
+            status: "authed".to_string(),
+            auth_file,
+        };
     }
 
     if probe == "unauthed" || probe == "missing" {
-        return probe;
+        return CodexAuthDetection {
+            status: probe,
+            auth_file: None,
+        };
     }
 
-    "unknown".to_string()
+    CodexAuthDetection {
+        status: "missing".to_string(),
+        auth_file: None,
+    }
 }
 
 fn is_codex_auth_ready(status: &str) -> bool {
@@ -530,12 +591,19 @@ fn oauth_status_for_ready_proxy(codex_auth_status: &str) -> String {
     }
 }
 
-fn openai_oauth_proxy_args(port: u16) -> Vec<String> {
+fn apply_codex_file_auth_env(command: &mut Command, codex_home: &Path) {
+    command.env("CODEX_HOME", codex_home);
+    command.env("CHATGPT_LOCAL_HOME", codex_home);
+}
+
+fn openai_oauth_proxy_args(port: u16, auth_file: &Path) -> Vec<String> {
     vec![
         "--yes".to_string(),
         "openai-oauth@latest".to_string(),
         "--port".to_string(),
         port.to_string(),
+        "--oauth-file".to_string(),
+        auth_file.to_string_lossy().into_owned(),
         "--models".to_string(),
         IMA2_SIDECAR_PROXY_MODELS.to_string(),
     ]
@@ -826,7 +894,8 @@ async fn fetch_ima2_sidecar_snapshot(
     cleanup_managed_proxy(runtime).await?;
 
     let settings = resolve_ima2_sidecar_settings(app)?;
-    let codex_auth_status = detect_codex_auth_status();
+    let codex_auth = detect_codex_auth(Some(app));
+    let codex_auth_status = codex_auth.status;
     let proxy_managed = managed_proxy_matches(runtime, &settings.base_url).await?;
     let client = Client::builder()
         .timeout(Duration::from_secs(IMA2_SIDECAR_HEALTH_TIMEOUT_SECONDS))
@@ -887,8 +956,14 @@ async fn fetch_ima2_sidecar_snapshot(
     })
 }
 
-fn try_spawn_process(binary: &str, args: &[&str]) -> Result<(), String> {
-    hidden_command(binary)
+fn try_spawn_process(binary: &str, args: &[&str], codex_home: Option<&Path>) -> Result<(), String> {
+    let mut command = hidden_command(binary);
+
+    if let Some(codex_home) = codex_home {
+        apply_codex_file_auth_env(&mut command, codex_home);
+    }
+
+    command
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -898,9 +973,19 @@ fn try_spawn_process(binary: &str, args: &[&str]) -> Result<(), String> {
         .map_err(|error| error.to_string())
 }
 
-fn launch_codex_login_process() -> Result<(), String> {
+fn launch_codex_login_process(app: &AppHandle) -> Result<(), String> {
+    let codex_home = ensure_managed_codex_file_auth_config(app)?;
+    let npx_login_args = ["--yes", "@openai/codex@latest", "login"];
+
+    match try_spawn_process(npx_binary(), &npx_login_args, Some(&codex_home)) {
+        Ok(()) => return Ok(()),
+        Err(error) if error.contains("No such file or directory") => {}
+        Err(error) if error.contains("cannot find the file") => {}
+        Err(_) => {}
+    }
+
     for binary in codex_binary_candidates() {
-        match try_spawn_process(binary, &["login"]) {
+        match try_spawn_process(binary, &["login"], Some(&codex_home)) {
             Ok(()) => return Ok(()),
             Err(error) if error.contains("No such file or directory") => continue,
             Err(error) if error.contains("cannot find the file") => continue,
@@ -908,7 +993,7 @@ fn launch_codex_login_process() -> Result<(), String> {
         }
     }
 
-    try_spawn_process(npx_binary(), &["--yes", "@openai/codex@latest", "login"])
+    try_spawn_process(npx_binary(), &npx_login_args, Some(&codex_home))
 }
 
 async fn start_managed_proxy(
@@ -918,7 +1003,9 @@ async fn start_managed_proxy(
     cleanup_managed_proxy(runtime).await?;
     let settings = resolve_ima2_sidecar_settings(app)?;
 
-    if !is_codex_auth_ready(&detect_codex_auth_status()) {
+    let codex_auth = detect_codex_auth(Some(app));
+
+    if !is_codex_auth_ready(&codex_auth.status) {
         return fetch_ima2_sidecar_snapshot(app, runtime).await;
     }
 
@@ -929,8 +1016,16 @@ async fn start_managed_proxy(
     stop_managed_proxy(runtime).await?;
 
     let port = parse_proxy_port(&settings.base_url)?;
-    let proxy_args = openai_oauth_proxy_args(port);
-    let child = hidden_command(npx_binary())
+    let auth_file = codex_auth
+        .auth_file
+        .ok_or_else(|| "ChatGPT login did not create a local auth file.".to_string())?;
+    let codex_home = auth_file
+        .parent()
+        .ok_or_else(|| "ChatGPT auth file path is invalid.".to_string())?;
+    let proxy_args = openai_oauth_proxy_args(port, &auth_file);
+    let mut command = hidden_command(npx_binary());
+    apply_codex_file_auth_env(&mut command, codex_home);
+    let child = command
         .args(proxy_args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -1365,8 +1460,8 @@ pub async fn start_ima2_sidecar_proxy(
 }
 
 #[tauri::command]
-pub async fn launch_ima2_sidecar_login() -> Result<(), String> {
-    launch_codex_login_process()
+pub async fn launch_ima2_sidecar_login(app: AppHandle) -> Result<(), String> {
+    launch_codex_login_process(&app)
 }
 
 #[tauri::command]
@@ -1385,7 +1480,9 @@ pub async fn start_ima2_sidecar_generation(
         return Err("ChatGPT OAuth needs login before generation can start.".to_string());
     }
     if snapshot.oauth_status == "starting" {
-        return Err("ChatGPT OAuth is still starting. Retry in a moment.".to_string());
+        return Err(
+            "ChatGPT OAuth is still starting. Wait for Ready before generating.".to_string(),
+        );
     }
     if snapshot.oauth_status != "ready" {
         return Err(format!(
@@ -1588,10 +1685,13 @@ mod tests {
 
     #[test]
     fn starts_proxy_with_static_models_to_avoid_startup_discovery_failures() {
-        let args = openai_oauth_proxy_args(10531);
+        let auth_file = PathBuf::from("auth.json");
+        let args = openai_oauth_proxy_args(10531, &auth_file);
 
         assert_eq!(args[0], "--yes");
         assert_eq!(args[1], "openai-oauth@latest");
+        assert!(args.contains(&"--oauth-file".to_string()));
+        assert!(args.contains(&"auth.json".to_string()));
         assert!(args.contains(&"--models".to_string()));
         assert!(args.contains(&IMA2_SIDECAR_PROXY_MODELS.to_string()));
     }

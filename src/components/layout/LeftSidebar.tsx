@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import {
   AlertIcon,
@@ -140,6 +140,7 @@ export function LeftSidebar({
   const [openAiBaseUrl, setOpenAiBaseUrl] = useState(openAiSettings.baseUrl);
   const [ima2SidecarBaseUrl, setIma2SidecarBaseUrl] = useState(ima2SidecarSettings.baseUrl);
   const [oauthFlowState, setOauthFlowState] = useState<"idle" | "starting" | "waiting" | "ready" | "error">("idle");
+  const oauthProxyStartRequestedRef = useRef(false);
 
   useEffect(() => {
     setOpenAiOrganizationId(openAiSettings.organizationId ?? "");
@@ -202,24 +203,80 @@ export function LeftSidebar({
     : oauthNeedsLogin
       ? "Login needed"
       : "Not ready";
-  const oauthPrimaryActionLabel = oauthReady
-    ? "Ready"
-    : oauthNeedsLogin
-      ? "Log in"
-      : oauthFlowState === "waiting"
-        ? "Waiting"
-        : "Retry";
+  let oauthPrimaryActionLabel = "Start proxy";
+  let oauthStatusMessage = "Start proxy.";
+
+  if (oauthReady) {
+    oauthPrimaryActionLabel = "Ready";
+    oauthStatusMessage = "Ready to generate.";
+  } else if (oauthFlowState === "waiting") {
+    oauthPrimaryActionLabel = "Checking login";
+    oauthStatusMessage = "Finish login in the browser.";
+  } else if (oauthFlowState === "starting") {
+    oauthPrimaryActionLabel = oauthNeedsLogin ? "Opening login" : "Starting proxy";
+    oauthStatusMessage = oauthNeedsLogin ? "Opening login." : "Starting proxy.";
+  } else if (ima2SidecarSettingsStatus === "loading") {
+    oauthPrimaryActionLabel = "Checking status";
+    oauthStatusMessage = "Checking status.";
+  } else if (oauthNeedsLogin) {
+    oauthPrimaryActionLabel = "Log in";
+    oauthStatusMessage = "Login has not created local OAuth credentials yet.";
+  } else if (ima2SidecarSettings.oauthStatus === "starting") {
+    oauthPrimaryActionLabel = "Starting proxy";
+    oauthStatusMessage = "Starting proxy.";
+  }
 
   useEffect(() => {
-    if (openAiAuthMethod !== "oauth" || oauthFlowState !== "waiting") {
+    if (openAiAuthMethod !== "oauth") {
+      oauthProxyStartRequestedRef.current = false;
+      return;
+    }
+
+    if (oauthFlowState !== "waiting" && oauthFlowState !== "starting") {
       return;
     }
 
     if (oauthReady) {
+      oauthProxyStartRequestedRef.current = false;
       setOauthFlowState("ready");
       pushToast({
         kind: "success",
         title: "OAuth ready",
+      });
+      return;
+    }
+
+    if (
+      oauthFlowState === "waiting"
+      && !oauthNeedsLogin
+      && ima2SidecarSettingsStatus === "idle"
+      && !oauthProxyStartRequestedRef.current
+    ) {
+      oauthProxyStartRequestedRef.current = true;
+      setOauthFlowState("starting");
+      void startIma2SidecarProxy().then((nextSnapshot) => {
+        if (!nextSnapshot) {
+          setOauthFlowState("error");
+          return;
+        }
+
+        if (nextSnapshot.oauthStatus === "ready") {
+          oauthProxyStartRequestedRef.current = false;
+          setOauthFlowState("ready");
+          pushToast({
+            kind: "success",
+            title: "OAuth ready",
+          });
+          return;
+        }
+
+        if (nextSnapshot.oauthStatus === "auth_required") {
+          oauthProxyStartRequestedRef.current = false;
+          setOauthFlowState("waiting");
+          return;
+        }
+
+        setOauthFlowState(nextSnapshot.oauthStatus === "starting" ? "starting" : "idle");
       });
       return;
     }
@@ -231,7 +288,10 @@ export function LeftSidebar({
       setOauthFlowState("idle");
       pushToast({
         kind: "info",
-        title: "Login still needed",
+        title: oauthFlowState === "waiting" ? "Login not detected" : "OAuth not ready",
+        description: oauthFlowState === "waiting"
+          ? "Finish login in the browser, then try again."
+          : "Check proxy status, then try again.",
       });
     }, 60_000);
 
@@ -239,7 +299,16 @@ export function LeftSidebar({
       window.clearInterval(intervalId);
       window.clearTimeout(timeoutId);
     };
-  }, [oauthFlowState, oauthReady, openAiAuthMethod, pushToast, reloadIma2SidecarSettings]);
+  }, [
+    ima2SidecarSettingsStatus,
+    oauthFlowState,
+    oauthNeedsLogin,
+    oauthReady,
+    openAiAuthMethod,
+    pushToast,
+    reloadIma2SidecarSettings,
+    startIma2SidecarProxy,
+  ]);
 
   const handleOpenSettings = (section: SettingsSurfaceSection) => {
     setSettingsSection(section);
@@ -381,12 +450,12 @@ export function LeftSidebar({
       scope: "auth",
       title: "OAuth login started",
       message: "ChatGPT login flow was launched from the provider settings.",
-      details: "Login pending.",
+      details: "Finish login in the browser.",
     });
     pushToast({
       kind: "info",
       title: "Login started",
-      description: "Login pending.",
+      description: "Finish login in the browser.",
     });
   };
 
@@ -414,6 +483,7 @@ export function LeftSidebar({
       pushToast({
         kind: "info",
         title: "Login opened",
+        description: "Finish login in the browser.",
       });
       window.setTimeout(() => {
         void reloadIma2SidecarSettings();
@@ -593,6 +663,7 @@ export function LeftSidebar({
                   <>
                     <section className="oauth-card">
                       <strong>{oauthStatusTitle}</strong>
+                      <p>{oauthStatusMessage}</p>
 
                       <button
                         className="settings-action settings-action--primary"
@@ -600,7 +671,7 @@ export function LeftSidebar({
                         onClick={() => void handlePrepareIma2OAuth()}
                       >
                         <SparklesIcon size={14} />
-                        <span>{oauthBusy ? "Working" : oauthPrimaryActionLabel}</span>
+                        <span>{oauthPrimaryActionLabel}</span>
                       </button>
                     </section>
 

@@ -83,19 +83,19 @@ export function mapOpenAiOAuthAvailability(options: {
   }
 
   if (snapshot.oauthStatus === "auth_required" || snapshot.codexAuthStatus === "unauthed" || snapshot.codexAuthStatus === "missing") {
-    return createAvailability("auth-required", "Login needed", "Log in with ChatGPT.");
+    return createAvailability("auth-required", "Login needed", "Log in to use OAuth.");
   }
 
   if (!snapshot.available || snapshot.oauthStatus === "offline") {
-    return createAvailability("auth-required", "Not ready", "OAuth is not ready.");
+    return createAvailability("auth-required", "Not ready", "Start OAuth proxy.");
   }
 
   if (snapshot.oauthStatus === "starting") {
-    return createAvailability("auth-required", "Not ready", "OAuth is starting.");
+    return createAvailability("auth-required", "Not ready", "Starting proxy.");
   }
 
   if (snapshot.oauthStatus === "ready") {
-    return createAvailability("available", "Ready", "OAuth is ready.");
+    return createAvailability("available", "Ready", "Ready to generate.");
   }
 
   return createAvailability("unavailable", "Unavailable", "OAuth status could not be determined.");
