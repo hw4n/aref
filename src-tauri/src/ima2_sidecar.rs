@@ -527,10 +527,6 @@ fn codex_login_status_from_output(
     stdout: &[u8],
     stderr: &[u8],
 ) -> &'static str {
-    if exit_success {
-        return "authed";
-    }
-
     let combined = format!(
         "{}\n{}",
         String::from_utf8_lossy(stdout),
@@ -539,14 +535,19 @@ fn codex_login_status_from_output(
     .to_ascii_lowercase();
 
     if combined.contains("logged in with chatgpt")
+        || combined.contains("logged in using chatgpt")
         || (combined.contains("logged in") && combined.contains("chatgpt"))
     {
         "authed"
+    } else if combined.contains("api key") {
+        "unauthed"
     } else if combined.contains("not logged in")
         || combined.contains("not authenticated")
         || combined.contains("login required")
     {
         "unauthed"
+    } else if exit_success {
+        "authed"
     } else {
         "unknown"
     }
@@ -575,28 +576,6 @@ fn probe_codex_login_status() -> String {
             Err(error) if error.kind() == ErrorKind::NotFound => continue,
             Err(_) => saw_unknown = true,
         }
-    }
-
-    match run_hidden_command_with_timeout(
-        npx_binary(),
-        &["--yes", "@openai/codex@latest", "login", "status"],
-        timeout,
-    ) {
-        Ok(Some(output)) => {
-            let status = codex_login_status_from_output(
-                output.status.success(),
-                &output.stdout,
-                &output.stderr,
-            );
-            if status == "authed" {
-                return status.to_string();
-            }
-            saw_unauthed |= status == "unauthed";
-            saw_unknown |= status == "unknown";
-        }
-        Ok(None) => saw_unknown = true,
-        Err(error) if error.kind() == ErrorKind::NotFound => {}
-        Err(_) => saw_unknown = true,
     }
 
     if saw_unauthed {
@@ -998,31 +977,30 @@ async fn fetch_ima2_sidecar_snapshot(
 }
 
 fn try_spawn_process(binary: &str, args: &[&str]) -> Result<(), String> {
-    hidden_command_with_args(binary, args)
+    let mut child = hidden_command_with_args(binary, args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .map(|_child| ())
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+
+    thread::sleep(Duration::from_millis(800));
+    match child.try_wait() {
+        Ok(Some(status)) if !status.success() => Err(format!("{binary} exited with {status}")),
+        Ok(_) => Ok(()),
+        Err(error) => Err(error.to_string()),
+    }
 }
 
 fn launch_codex_login_process() -> Result<(), String> {
     let npx_login_args = ["--yes", "@openai/codex@latest", "login"];
-
-    match try_spawn_process(npx_binary(), &npx_login_args) {
-        Ok(()) => return Ok(()),
-        Err(error) if error.contains("No such file or directory") => {}
-        Err(error) if error.contains("cannot find the file") => {}
-        Err(_) => {}
-    }
 
     for binary in codex_binary_candidates() {
         match try_spawn_process(binary, &["login"]) {
             Ok(()) => return Ok(()),
             Err(error) if error.contains("No such file or directory") => continue,
             Err(error) if error.contains("cannot find the file") => continue,
-            Err(error) => return Err(error),
+            Err(_) => continue,
         }
     }
 
@@ -1707,6 +1685,14 @@ mod tests {
         assert_eq!(
             codex_login_status_from_output(false, b"Logged in with ChatGPT", b""),
             "authed"
+        );
+        assert_eq!(
+            codex_login_status_from_output(false, b"Logged in using ChatGPT", b""),
+            "authed"
+        );
+        assert_eq!(
+            codex_login_status_from_output(true, b"Logged in using an API key", b""),
+            "unauthed"
         );
         assert_eq!(
             codex_login_status_from_output(false, b"", b"Not logged in"),

@@ -191,8 +191,7 @@ export function LeftSidebar({
     [],
   );
   const oauthNeedsLogin = ima2SidecarSettings.oauthStatus === "auth_required"
-    || ima2SidecarSettings.codexAuthStatus === "unauthed"
-    || ima2SidecarSettings.codexAuthStatus === "missing";
+    || ima2SidecarSettings.codexAuthStatus !== "authed";
   const oauthReady = ima2SidecarSettings.oauthStatus === "ready";
   const oauthBusy = ima2SidecarSettingsStatus === "loading"
     || ima2SidecarSettingsStatus === "saving"

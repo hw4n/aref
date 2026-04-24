@@ -83,6 +83,23 @@ describe("provider management", () => {
         error: null,
       }).state,
     ).toBe("auth-required");
+
+    expect(
+      mapOpenAiOAuthAvailability({
+        snapshot: {
+          configured: true,
+          available: false,
+          source: "stored",
+          baseUrl: "http://127.0.0.1:10531",
+          oauthStatus: "offline",
+          codexAuthStatus: "unknown",
+          proxyManaged: true,
+        },
+        isDesktop: true,
+        status: "idle",
+        error: null,
+      }).label,
+    ).toBe("Log in");
   });
 
   it("maps mock provider gating to disabled or available", () => {

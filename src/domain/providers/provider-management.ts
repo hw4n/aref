@@ -82,7 +82,7 @@ export function mapOpenAiOAuthAvailability(options: {
     return createAvailability("unavailable", "Unavailable", error ?? "OAuth bridge settings failed to load.");
   }
 
-  if (snapshot.oauthStatus === "auth_required" || snapshot.codexAuthStatus === "unauthed" || snapshot.codexAuthStatus === "missing") {
+  if (snapshot.oauthStatus === "auth_required" || snapshot.codexAuthStatus !== "authed") {
     return createAvailability("auth-required", "Log in", "Log in to use OAuth.");
   }
 
