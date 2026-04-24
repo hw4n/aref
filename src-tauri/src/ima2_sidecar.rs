@@ -1124,6 +1124,23 @@ fn build_windows_visible_login_command(auth_env: &ArefCodexAuthEnv, npx_binary: 
     .join(" && ")
 }
 
+#[cfg_attr(not(any(target_os = "windows", test)), allow(dead_code))]
+fn quote_powershell_single_quoted(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
+#[cfg_attr(not(any(target_os = "windows", test)), allow(dead_code))]
+fn build_windows_device_auth_powershell_script(
+    auth_env: &ArefCodexAuthEnv,
+    npx_binary: &str,
+) -> String {
+    let login_command = build_windows_visible_login_command(auth_env, npx_binary);
+    format!(
+        "Start-Process -FilePath 'cmd.exe' -ArgumentList @('/d','/k',{}) -WindowStyle Normal",
+        quote_powershell_single_quoted(&login_command)
+    )
+}
+
 #[cfg(target_os = "windows")]
 fn visible_windows_command(binary: &str) -> Command {
     let mut command = Command::new(binary);
@@ -1134,6 +1151,28 @@ fn visible_windows_command(binary: &str) -> Command {
 
 #[cfg(target_os = "windows")]
 fn launch_windows_visible_codex_login(auth_env: &ArefCodexAuthEnv) -> Result<(), String> {
+    let powershell_script = build_windows_device_auth_powershell_script(auth_env, npx_binary());
+    let mut child = hidden_command("powershell.exe")
+        .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command"])
+        .arg(powershell_script)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| error.to_string())?;
+
+    thread::sleep(Duration::from_millis(800));
+    match child.try_wait() {
+        Ok(Some(status)) if !status.success() => {
+            Err(format!("powershell.exe exited with {status}"))
+        }
+        Ok(_) => Ok(()),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn launch_windows_direct_console_login(auth_env: &ArefCodexAuthEnv) -> Result<(), String> {
     let login_command = build_windows_visible_login_command(auth_env, npx_binary());
     let mut child = visible_windows_command("cmd.exe")
         .args(["/d", "/k"])
@@ -1152,13 +1191,43 @@ fn launch_windows_visible_codex_login(auth_env: &ArefCodexAuthEnv) -> Result<(),
     }
 }
 
+#[cfg(target_os = "windows")]
+fn launch_windows_codex_login(auth_env: &ArefCodexAuthEnv) -> Result<(), String> {
+    for binary in codex_binary_candidates() {
+        match try_spawn_process(binary, &["login"], auth_env) {
+            Ok(()) => return Ok(()),
+            Err(error) if error.contains("No such file or directory") => continue,
+            Err(error) if error.contains("cannot find the file") => continue,
+            Err(_) => continue,
+        }
+    }
+
+    match try_spawn_process(
+        npx_binary(),
+        &["--yes", "@openai/codex@latest", "login"],
+        auth_env,
+    ) {
+        Ok(()) => Ok(()),
+        Err(browser_login_error) => match launch_windows_visible_codex_login(auth_env) {
+            Ok(()) => Ok(()),
+            Err(powershell_error) => launch_windows_direct_console_login(auth_env).map_err(
+                |console_error| {
+                    format!(
+                        "Browser login failed: {browser_login_error}. PowerShell device login failed: {powershell_error}. Direct console login failed: {console_error}"
+                    )
+                },
+            ),
+        },
+    }
+}
+
 fn launch_codex_login_process(app: &AppHandle) -> Result<(), String> {
     let auth_env = aref_codex_auth_env(app)?;
     ensure_codex_file_credentials_config(&auth_env)?;
 
     #[cfg(target_os = "windows")]
     {
-        return launch_windows_visible_codex_login(&auth_env);
+        return launch_windows_codex_login(&auth_env);
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -1970,6 +2039,27 @@ mod tests {
         assert!(command.contains("npx.cmd --yes @openai/codex@latest login --device-auth"));
         assert!(!command.contains("start \"Aref Codex Login\""));
         assert!(!command.contains("^&^&"));
+    }
+
+    #[test]
+    fn builds_powershell_device_auth_launcher() {
+        let auth_env = ArefCodexAuthEnv {
+            codex_home: PathBuf::from(
+                "C:\\Users\\Aref User\\AppData\\Roaming\\Aref\\codex-oauth\\codex",
+            ),
+            chatgpt_local_home: PathBuf::from(
+                "C:\\Users\\Aref User\\AppData\\Roaming\\Aref\\codex-oauth\\chatgpt-local",
+            ),
+            auth_file: PathBuf::from(
+                "C:\\Users\\Aref User\\AppData\\Roaming\\Aref\\codex-oauth\\codex\\auth.json",
+            ),
+        };
+        let script = build_windows_device_auth_powershell_script(&auth_env, "npx.cmd");
+
+        assert!(script.starts_with("Start-Process -FilePath 'cmd.exe'"));
+        assert!(script.contains("-ArgumentList @('/d','/k','title Aref Codex Login && "));
+        assert!(script.contains("npx.cmd --yes @openai/codex@latest login --device-auth"));
+        assert!(!script.contains("start \"Aref Codex Login\""));
     }
 
     #[test]
