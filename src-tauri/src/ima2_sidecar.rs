@@ -3,6 +3,7 @@ use std::{
     env,
     fs::{self, OpenOptions},
     io::{ErrorKind, Write},
+    net::TcpListener,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::Arc,
@@ -33,6 +34,7 @@ const IMA2_SIDECAR_HEALTH_TIMEOUT_SECONDS: u64 = 3;
 const IMA2_SIDECAR_PROXY_WARMUP_MILLISECONDS: u64 = 900;
 const IMA2_SIDECAR_PROXY_READY_TIMEOUT_MILLISECONDS: u64 = 12_000;
 const IMA2_SIDECAR_PROXY_READY_POLL_MILLISECONDS: u64 = 750;
+const IMA2_SIDECAR_PROXY_PORT_FALLBACK_ATTEMPTS: u16 = 20;
 const CODEX_LOGIN_STATUS_TIMEOUT_MILLISECONDS: u64 = 2_500;
 const HIDDEN_COMMAND_POLL_MILLISECONDS: u64 = 50;
 const OPENAI_OAUTH_PACKAGE: &str = "openai-oauth@1.0.2";
@@ -542,6 +544,7 @@ fn codex_binary_candidates() -> &'static [&'static str] {
     }
 }
 
+#[cfg_attr(target_os = "windows", allow(dead_code))]
 fn npx_binary() -> &'static str {
     #[cfg(target_os = "windows")]
     {
@@ -642,42 +645,7 @@ fn hidden_command(binary: &str) -> Command {
     }
 }
 
-#[cfg_attr(not(any(target_os = "windows", test)), allow(dead_code))]
-fn quote_windows_cmd_token(token: &str) -> String {
-    if token.is_empty()
-        || token.chars().any(|character| {
-            matches!(
-                character,
-                ' ' | '\t' | '"' | '&' | '|' | '<' | '>' | '^' | '(' | ')'
-            )
-        })
-    {
-        format!("\"{}\"", token.replace('"', "\\\""))
-    } else {
-        token.to_string()
-    }
-}
-
-#[cfg_attr(not(any(target_os = "windows", test)), allow(dead_code))]
-fn build_windows_cmd_line<S: AsRef<str>>(binary: &str, args: &[S]) -> String {
-    std::iter::once(quote_windows_cmd_token(binary))
-        .chain(args.iter().map(|arg| quote_windows_cmd_token(arg.as_ref())))
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
 fn hidden_command_with_args<S: AsRef<str>>(binary: &str, args: &[S]) -> Command {
-    #[cfg(target_os = "windows")]
-    {
-        if binary.to_ascii_lowercase().ends_with(".cmd") {
-            let mut command = hidden_command("cmd.exe");
-            command
-                .args(["/d", "/s", "/c"])
-                .arg(build_windows_cmd_line(binary, args));
-            return command;
-        }
-    }
-
     let mut command = hidden_command(binary);
     for arg in args {
         command.arg(arg.as_ref());
@@ -1191,6 +1159,30 @@ fn parse_proxy_port(base_url: &str) -> Result<u16, String> {
         .ok_or_else(|| "Proxy URL port is missing.".to_string())
 }
 
+fn proxy_base_url_with_port(base_url: &str, port: u16) -> Result<String, String> {
+    let mut parsed = Url::parse(base_url).map_err(|error| error.to_string())?;
+    parsed
+        .set_port(Some(port))
+        .map_err(|()| "Proxy URL cannot use the selected port.".to_string())?;
+    parsed.set_query(None);
+    parsed.set_fragment(None);
+
+    Ok(parsed.as_str().trim_end_matches('/').to_string())
+}
+
+fn local_proxy_port_available(port: u16) -> bool {
+    TcpListener::bind(("127.0.0.1", port)).is_ok()
+}
+
+fn select_available_proxy_port(preferred_port: u16) -> Option<u16> {
+    std::iter::once(preferred_port)
+        .chain(
+            (1..=IMA2_SIDECAR_PROXY_PORT_FALLBACK_ATTEMPTS)
+                .filter_map(|offset| preferred_port.checked_add(offset)),
+        )
+        .find(|port| local_proxy_port_available(*port))
+}
+
 async fn cleanup_managed_proxy(runtime: &Ima2SidecarRuntimeState) -> Result<(), String> {
     let mut guard = runtime.proxy.lock().await;
 
@@ -1498,7 +1490,23 @@ async fn start_managed_proxy(
     stop_managed_proxy(runtime).await?;
 
     let npx_path = resolve_npx_binary()?;
-    let port = parse_proxy_port(&settings.base_url)?;
+    let requested_port = parse_proxy_port(&settings.base_url)?;
+    let (base_url, port) = match select_available_proxy_port(requested_port) {
+        Some(port) if port != requested_port => {
+            let base_url = proxy_base_url_with_port(&settings.base_url, port)?;
+            if settings.source != "environment" {
+                write_stored_ima2_sidecar_settings(
+                    app,
+                    &StoredIma2SidecarSettings {
+                        base_url: Some(base_url.clone()),
+                    },
+                )?;
+            }
+            (base_url, port)
+        }
+        Some(port) => (settings.base_url.clone(), port),
+        None => (settings.base_url.clone(), requested_port),
+    };
     let login_log_path = ima2_sidecar_login_log_path(app)?;
     let codex_version = resolve_openai_oauth_codex_version(&login_log_path);
     let proxy_args = openai_oauth_proxy_args(port, &auth_env.auth_file, &codex_version);
@@ -1514,13 +1522,23 @@ async fn start_managed_proxy(
         "\n{} starting openai-oauth via {} for {} with auth file {} (exists: {}), CODEX_HOME {}, codex version {}",
         now_iso_string(),
         npx_path,
-        settings.base_url,
+        base_url,
         auth_env.auth_file.display(),
         auth_file_exists,
         auth_env.codex_home.display(),
         codex_version
     )
     .map_err(|error| error.to_string())?;
+    if port != requested_port {
+        writeln!(
+            proxy_log,
+            "{} requested OAuth proxy port {} was unavailable; using {} instead",
+            now_iso_string(),
+            requested_port,
+            port
+        )
+        .map_err(|error| error.to_string())?;
+    }
     let proxy_stdout = proxy_log.try_clone().map_err(|error| error.to_string())?;
     let proxy_stderr = proxy_log.try_clone().map_err(|error| error.to_string())?;
     let mut proxy_command = hidden_command_with_args(&npx_path, &proxy_args);
@@ -1536,7 +1554,7 @@ async fn start_managed_proxy(
             let message = format!(
                 "Failed to start openai-oauth via {} for {} with auth file {} (exists: {}) and CODEX_HOME {}. Log: {}. Error: {}",
                 npx_path,
-                settings.base_url,
+                base_url,
                 auth_env.auth_file.display(),
                 auth_file_exists,
                 auth_env.codex_home.display(),
@@ -1555,7 +1573,7 @@ async fn start_managed_proxy(
 
     runtime.proxy.lock().await.replace(ManagedIma2Proxy {
         child,
-        base_url: settings.base_url.clone(),
+        base_url: base_url.clone(),
     });
 
     let deadline =
@@ -2221,6 +2239,15 @@ mod tests {
     }
 
     #[test]
+    fn rewrites_proxy_base_url_to_selected_port() {
+        let base_url = proxy_base_url_with_port("http://127.0.0.1:10531", 10542)
+            .expect("proxy URL should be rewritten");
+
+        assert_eq!(base_url, "http://127.0.0.1:10542");
+        assert_eq!(parse_proxy_port(&base_url), Ok(10542));
+    }
+
+    #[test]
     fn maps_model_probe_to_runtime_status() {
         assert_eq!(
             oauth_status_for_model_probe("authed", StatusCode::OK),
@@ -2359,11 +2386,18 @@ mod tests {
     }
 
     #[test]
-    fn quotes_windows_cmd_tokens_with_spaces() {
-        assert_eq!(
-            build_windows_cmd_line("npx.cmd", &["--yes", "C:\\Users\\Aref User\\auth.json"]),
-            "npx.cmd --yes \"C:\\Users\\Aref User\\auth.json\""
+    fn builds_hidden_command_with_args_without_cmd_requoting() {
+        let command = hidden_command_with_args(
+            "C:\\Program Files\\nodejs\\npx.cmd",
+            &["--yes", "C:\\Users\\Aref User\\auth.json"],
         );
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+
+        assert_eq!(command.get_program(), "C:\\Program Files\\nodejs\\npx.cmd");
+        assert_eq!(args, ["--yes", "C:\\Users\\Aref User\\auth.json"]);
     }
 
     #[test]

@@ -1,6 +1,6 @@
 [package]
 name = "aref"
-version = "0.1.15"
+version = "0.1.16"
 description = "Aref desktop reference canvas"
 authors = ["OpenAI Codex"]
 license = ""
