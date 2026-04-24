@@ -2,10 +2,11 @@ use std::{
     collections::BTreeMap,
     env,
     fs::{self, OpenOptions},
-    io::Write,
+    io::{ErrorKind, Write},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::Arc,
+    thread,
     time::{Duration, Instant},
 };
 
@@ -30,6 +31,8 @@ const IMA2_SIDECAR_HEALTH_TIMEOUT_SECONDS: u64 = 3;
 const IMA2_SIDECAR_PROXY_WARMUP_MILLISECONDS: u64 = 900;
 const IMA2_SIDECAR_PROXY_READY_TIMEOUT_MILLISECONDS: u64 = 12_000;
 const IMA2_SIDECAR_PROXY_READY_POLL_MILLISECONDS: u64 = 750;
+const CODEX_LOGIN_STATUS_TIMEOUT_MILLISECONDS: u64 = 2_500;
+const HIDDEN_COMMAND_POLL_MILLISECONDS: u64 = 50;
 const IMA2_SIDECAR_PROXY_MODELS: &str =
     "gpt-5.4,gpt-5.3-codex,gpt-5.3-codex-spark,gpt-5.2,gpt-5.1,gpt-5.1-codex,gpt-5.1-codex-max";
 const OAUTH_IMAGE_DEVELOPER_PROMPT: &str =
@@ -451,11 +454,165 @@ fn hidden_command(binary: &str) -> Command {
     }
 }
 
+#[cfg(target_os = "windows")]
+fn quote_windows_cmd_token(token: &str) -> String {
+    if token.is_empty()
+        || token.chars().any(|character| {
+            matches!(
+                character,
+                ' ' | '\t' | '"' | '&' | '|' | '<' | '>' | '^' | '(' | ')'
+            )
+        })
+    {
+        format!("\"{}\"", token.replace('"', "\\\""))
+    } else {
+        token.to_string()
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn build_windows_cmd_line<S: AsRef<str>>(binary: &str, args: &[S]) -> String {
+    std::iter::once(quote_windows_cmd_token(binary))
+        .chain(args.iter().map(|arg| quote_windows_cmd_token(arg.as_ref())))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn hidden_command_with_args<S: AsRef<str>>(binary: &str, args: &[S]) -> Command {
+    #[cfg(target_os = "windows")]
+    {
+        if binary.to_ascii_lowercase().ends_with(".cmd") {
+            let mut command = hidden_command("cmd.exe");
+            command
+                .args(["/d", "/s", "/c"])
+                .arg(build_windows_cmd_line(binary, args));
+            return command;
+        }
+    }
+
+    let mut command = hidden_command(binary);
+    for arg in args {
+        command.arg(arg.as_ref());
+    }
+    command
+}
+
+fn run_hidden_command_with_timeout<S: AsRef<str>>(
+    binary: &str,
+    args: &[S],
+    timeout: Duration,
+) -> Result<Option<std::process::Output>, std::io::Error> {
+    let mut child = hidden_command_with_args(binary, args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let deadline = Instant::now() + timeout;
+
+    loop {
+        match child.try_wait()? {
+            Some(_) => return child.wait_with_output().map(Some),
+            None if Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Ok(None);
+            }
+            None => thread::sleep(Duration::from_millis(HIDDEN_COMMAND_POLL_MILLISECONDS)),
+        }
+    }
+}
+
+fn codex_login_status_from_output(
+    exit_success: bool,
+    stdout: &[u8],
+    stderr: &[u8],
+) -> &'static str {
+    if exit_success {
+        return "authed";
+    }
+
+    let combined = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(stdout),
+        String::from_utf8_lossy(stderr)
+    )
+    .to_ascii_lowercase();
+
+    if combined.contains("logged in with chatgpt")
+        || (combined.contains("logged in") && combined.contains("chatgpt"))
+    {
+        "authed"
+    } else if combined.contains("not logged in")
+        || combined.contains("not authenticated")
+        || combined.contains("login required")
+    {
+        "unauthed"
+    } else {
+        "unknown"
+    }
+}
+
+fn probe_codex_login_status() -> String {
+    let timeout = Duration::from_millis(CODEX_LOGIN_STATUS_TIMEOUT_MILLISECONDS);
+    let mut saw_unauthed = false;
+    let mut saw_unknown = false;
+
+    for binary in codex_binary_candidates() {
+        match run_hidden_command_with_timeout(binary, &["login", "status"], timeout) {
+            Ok(Some(output)) => {
+                let status = codex_login_status_from_output(
+                    output.status.success(),
+                    &output.stdout,
+                    &output.stderr,
+                );
+                if status == "authed" {
+                    return status.to_string();
+                }
+                saw_unauthed |= status == "unauthed";
+                saw_unknown |= status == "unknown";
+            }
+            Ok(None) => saw_unknown = true,
+            Err(error) if error.kind() == ErrorKind::NotFound => continue,
+            Err(_) => saw_unknown = true,
+        }
+    }
+
+    match run_hidden_command_with_timeout(
+        npx_binary(),
+        &["--yes", "@openai/codex@latest", "login", "status"],
+        timeout,
+    ) {
+        Ok(Some(output)) => {
+            let status = codex_login_status_from_output(
+                output.status.success(),
+                &output.stdout,
+                &output.stderr,
+            );
+            if status == "authed" {
+                return status.to_string();
+            }
+            saw_unauthed |= status == "unauthed";
+            saw_unknown |= status == "unknown";
+        }
+        Ok(None) => saw_unknown = true,
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        Err(_) => saw_unknown = true,
+    }
+
+    if saw_unauthed {
+        "unauthed".to_string()
+    } else if saw_unknown {
+        "unknown".to_string()
+    } else {
+        "missing".to_string()
+    }
+}
+
 fn detect_codex_auth_status() -> String {
     if has_codex_auth_file() {
         "authed".to_string()
     } else {
-        "missing".to_string()
+        probe_codex_login_status()
     }
 }
 
@@ -841,8 +998,7 @@ async fn fetch_ima2_sidecar_snapshot(
 }
 
 fn try_spawn_process(binary: &str, args: &[&str]) -> Result<(), String> {
-    hidden_command(binary)
-        .args(args)
+    hidden_command_with_args(binary, args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -888,8 +1044,7 @@ async fn start_managed_proxy(
 
     let port = parse_proxy_port(&settings.base_url)?;
     let proxy_args = openai_oauth_proxy_args(port);
-    let child = hidden_command(npx_binary())
-        .args(proxy_args)
+    let child = hidden_command_with_args(npx_binary(), &proxy_args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -1543,6 +1698,23 @@ mod tests {
         assert_eq!(
             oauth_status_for_unreachable_proxy(false, "authed"),
             "offline"
+        );
+    }
+
+    #[test]
+    fn maps_codex_login_status_probe_output() {
+        assert_eq!(codex_login_status_from_output(true, b"", b""), "authed");
+        assert_eq!(
+            codex_login_status_from_output(false, b"Logged in with ChatGPT", b""),
+            "authed"
+        );
+        assert_eq!(
+            codex_login_status_from_output(false, b"", b"Not logged in"),
+            "unauthed"
+        );
+        assert_eq!(
+            codex_login_status_from_output(false, b"", b"unexpected failure"),
+            "unknown"
         );
     }
 

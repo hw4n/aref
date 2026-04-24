@@ -190,14 +190,14 @@ export function useProviderManagement() {
     if (
       !isDesktopIma2SidecarAvailable
       || ima2SidecarSettingsStatus !== "idle"
-      || ima2SidecarSettings.oauthStatus !== "starting"
+      || ima2SidecarSettings.oauthStatus === "ready"
     ) {
       return;
     }
 
     const intervalId = window.setInterval(() => {
       void reloadIma2SidecarSettings();
-    }, 2000);
+    }, 3000);
 
     return () => window.clearInterval(intervalId);
   }, [

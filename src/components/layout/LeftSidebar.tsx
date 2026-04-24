@@ -201,29 +201,29 @@ export function LeftSidebar({
   const oauthStatusTitle = oauthReady
     ? "Ready"
     : oauthNeedsLogin
-      ? "Login needed"
+      ? "Log in"
       : "Not ready";
-  let oauthPrimaryActionLabel = "Start proxy";
-  let oauthStatusMessage = "Start proxy.";
+  let oauthPrimaryActionLabel = oauthNeedsLogin ? "Log in" : "Check";
+  let oauthStatusMessage = oauthNeedsLogin ? "Login required." : "Not ready.";
 
   if (oauthReady) {
     oauthPrimaryActionLabel = "Ready";
-    oauthStatusMessage = "Ready to generate.";
+    oauthStatusMessage = "Ready.";
   } else if (oauthFlowState === "waiting") {
-    oauthPrimaryActionLabel = "Checking login";
-    oauthStatusMessage = "Finish login in the browser.";
+    oauthPrimaryActionLabel = "Checking";
+    oauthStatusMessage = "Complete browser login.";
   } else if (oauthFlowState === "starting") {
-    oauthPrimaryActionLabel = oauthNeedsLogin ? "Opening login" : "Starting proxy";
-    oauthStatusMessage = oauthNeedsLogin ? "Opening login." : "Starting proxy.";
+    oauthPrimaryActionLabel = "Checking";
+    oauthStatusMessage = oauthNeedsLogin ? "Opening login." : "Checking.";
   } else if (ima2SidecarSettingsStatus === "loading") {
-    oauthPrimaryActionLabel = "Checking status";
-    oauthStatusMessage = "Checking status.";
+    oauthPrimaryActionLabel = "Checking";
+    oauthStatusMessage = "Checking.";
   } else if (oauthNeedsLogin) {
     oauthPrimaryActionLabel = "Log in";
-    oauthStatusMessage = "Login has not created local OAuth credentials yet.";
+    oauthStatusMessage = "Login required.";
   } else if (ima2SidecarSettings.oauthStatus === "starting") {
-    oauthPrimaryActionLabel = "Starting proxy";
-    oauthStatusMessage = "Starting proxy.";
+    oauthPrimaryActionLabel = "Checking";
+    oauthStatusMessage = "Checking.";
   }
 
   useEffect(() => {

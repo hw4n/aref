@@ -83,15 +83,15 @@ export function mapOpenAiOAuthAvailability(options: {
   }
 
   if (snapshot.oauthStatus === "auth_required" || snapshot.codexAuthStatus === "unauthed" || snapshot.codexAuthStatus === "missing") {
-    return createAvailability("auth-required", "Login needed", "Log in to use OAuth.");
+    return createAvailability("auth-required", "Log in", "Log in to use OAuth.");
   }
 
   if (!snapshot.available || snapshot.oauthStatus === "offline") {
-    return createAvailability("auth-required", "Not ready", "Start OAuth proxy.");
+    return createAvailability("auth-required", "Not ready", "OAuth is not ready.");
   }
 
   if (snapshot.oauthStatus === "starting") {
-    return createAvailability("auth-required", "Not ready", "Starting proxy.");
+    return createAvailability("auth-required", "Not ready", "Checking OAuth.");
   }
 
   if (snapshot.oauthStatus === "ready") {

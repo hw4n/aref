@@ -76,9 +76,9 @@ GitHub releases are created by `.github/workflows/release.yml` whenever a semant
 4. Push a tag:
 
 ```bash
-git tag v0.1.6
+git tag v0.1.7
 git push origin main
-git push origin v0.1.6
+git push origin v0.1.7
 ```
 
 The workflow builds Linux, Windows, and macOS installers and uploads them to the matching GitHub Release.
