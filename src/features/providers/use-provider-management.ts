@@ -165,10 +165,6 @@ export function useProviderManagement() {
       return;
     }
 
-    if (ima2SidecarSettings.oauthStatus === "auth_required") {
-      return;
-    }
-
     const signature = [
       ima2SidecarSettings.baseUrl,
       ima2SidecarSettings.oauthStatus,
