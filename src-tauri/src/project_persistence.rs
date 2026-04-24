@@ -73,8 +73,13 @@ pub struct ProjectAssetSourcePayload {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum PersistedAssetSource {
-    Path { path: String },
-    Bytes { filename: Option<String>, bytes: Vec<u8> },
+    Path {
+        path: String,
+    },
+    Bytes {
+        filename: Option<String>,
+        bytes: Vec<u8>,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -364,11 +369,21 @@ fn asset_directory_for_project(project_path: &Path) -> Result<(PathBuf, String),
     let file_name = project_path
         .file_name()
         .and_then(|value| value.to_str())
-        .ok_or_else(|| format!("Invalid project file name: {}", normalize_path(project_path)))?;
+        .ok_or_else(|| {
+            format!(
+                "Invalid project file name: {}",
+                normalize_path(project_path)
+            )
+        })?;
     let directory_name = format!("{file_name}-assets");
     let directory = project_path
         .parent()
-        .ok_or_else(|| format!("Project file has no parent directory: {}", normalize_path(project_path)))?
+        .ok_or_else(|| {
+            format!(
+                "Project file has no parent directory: {}",
+                normalize_path(project_path)
+            )
+        })?
         .join(&directory_name);
 
     Ok((directory, directory_name))
@@ -418,7 +433,8 @@ fn write_recent_projects_file(app: &AppHandle, file: &RecentProjectsFile) -> Res
 }
 
 fn to_recent_project_records(items: Vec<RecentProjectFileEntry>) -> Vec<RecentProjectRecord> {
-    items.into_iter()
+    items
+        .into_iter()
         .map(|item| RecentProjectRecord {
             exists: Path::new(&item.path).exists(),
             path: item.path,
@@ -428,7 +444,11 @@ fn to_recent_project_records(items: Vec<RecentProjectFileEntry>) -> Vec<RecentPr
         .collect()
 }
 
-fn upsert_recent_project(app: &AppHandle, project_path: &Path, name: &str) -> Result<Vec<RecentProjectRecord>, String> {
+fn upsert_recent_project(
+    app: &AppHandle,
+    project_path: &Path,
+    name: &str,
+) -> Result<Vec<RecentProjectRecord>, String> {
     let mut file = read_recent_projects_file(app)?;
     let normalized_path = normalize_path(project_path);
     let timestamp = now_iso_string();
@@ -528,7 +548,10 @@ fn project_cache_directory(app: Option<&AppHandle>) -> Result<PathBuf, String> {
     Ok(directory)
 }
 
-fn extracted_project_directory(app: Option<&AppHandle>, project_path: &Path) -> Result<PathBuf, String> {
+fn extracted_project_directory(
+    app: Option<&AppHandle>,
+    project_path: &Path,
+) -> Result<PathBuf, String> {
     let stem = project_path
         .file_stem()
         .and_then(|value| value.to_str())
@@ -562,8 +585,9 @@ fn archive_asset_path(asset_id: &str, source: &PersistedAssetSource) -> String {
 
 fn read_asset_source_bytes(source: &PersistedAssetSource) -> Result<Vec<u8>, String> {
     match source {
-        PersistedAssetSource::Path { path } => fs::read(path)
-            .map_err(|error| format!("Failed to read asset from {}: {error}", path)),
+        PersistedAssetSource::Path { path } => {
+            fs::read(path).map_err(|error| format!("Failed to read asset from {}: {error}", path))
+        }
         PersistedAssetSource::Bytes { bytes, .. } => Ok(bytes.clone()),
     }
 }
@@ -587,7 +611,10 @@ fn cleanup_legacy_sidecar_directory(project_path: &Path) {
     }
 }
 
-fn build_runtime_project(persisted: PersistedProject, assets: BTreeMap<String, RuntimeAssetItem>) -> RuntimeProject {
+fn build_runtime_project(
+    persisted: PersistedProject,
+    assets: BTreeMap<String, RuntimeAssetItem>,
+) -> RuntimeProject {
     RuntimeProject {
         id: persisted.id,
         name: persisted.name,
@@ -614,20 +641,28 @@ fn build_runtime_project(persisted: PersistedProject, assets: BTreeMap<String, R
     }
 }
 
-fn load_legacy_json_project(project_path: &Path, bytes: &[u8]) -> Result<ProjectPersistenceHandle, String> {
+fn load_legacy_json_project(
+    project_path: &Path,
+    bytes: &[u8],
+) -> Result<ProjectPersistenceHandle, String> {
     let contents = String::from_utf8(bytes.to_vec()).map_err(|error| error.to_string())?;
-    let value = serde_json::from_str::<serde_json::Value>(&contents).map_err(|error| error.to_string())?;
+    let value =
+        serde_json::from_str::<serde_json::Value>(&contents).map_err(|error| error.to_string())?;
     let migrated = migrate_project_file(value)?;
-    let project_directory = project_path
-        .parent()
-        .ok_or_else(|| format!("Project file has no parent directory: {}", normalize_path(project_path)))?;
+    let project_directory = project_path.parent().ok_or_else(|| {
+        format!(
+            "Project file has no parent directory: {}",
+            normalize_path(project_path)
+        )
+    })?;
     let persisted_project = migrated.project;
 
     let assets = persisted_project
         .assets
         .iter()
         .map(|asset| {
-            let absolute_image_path = normalize_path(&project_directory.join(PathBuf::from(&asset.image_path)));
+            let absolute_image_path =
+                normalize_path(&project_directory.join(PathBuf::from(&asset.image_path)));
             let absolute_thumbnail_path = asset
                 .thumbnail_path
                 .as_ref()
@@ -677,7 +712,9 @@ fn extract_archive_entry(
     ensure_parent_directory(&target_path)?;
 
     let mut contents = Vec::new();
-    entry.read_to_end(&mut contents).map_err(|error| error.to_string())?;
+    entry
+        .read_to_end(&mut contents)
+        .map_err(|error| error.to_string())?;
     fs::write(&target_path, contents).map_err(|error| error.to_string())?;
 
     Ok(normalize_path(&target_path))
@@ -700,7 +737,8 @@ fn load_archive_project(
         .read_to_string(&mut metadata)
         .map_err(|error| error.to_string())?;
 
-    let value = serde_json::from_str::<serde_json::Value>(&metadata).map_err(|error| error.to_string())?;
+    let value =
+        serde_json::from_str::<serde_json::Value>(&metadata).map_err(|error| error.to_string())?;
     let migrated = migrate_project_file(value)?;
     let persisted_project = migrated.project;
     let output_root = extracted_project_directory(app, project_path)?;
@@ -710,7 +748,8 @@ fn load_archive_project(
         .assets
         .iter()
         .map(|asset| {
-            let absolute_image_path = extract_archive_entry(&mut archive, &asset.image_path, &output_root)?;
+            let absolute_image_path =
+                extract_archive_entry(&mut archive, &asset.image_path, &output_root)?;
             let absolute_thumbnail_path = match asset.thumbnail_path.as_deref() {
                 Some(path) => Some(extract_archive_entry(&mut archive, path, &output_root)?),
                 None => None,
@@ -771,10 +810,9 @@ fn write_project_file_to_path(
             kind: asset.kind.clone(),
             image_path: archive_asset_path(&asset.id, &asset_source.image),
             source_name: asset.source_name.clone(),
-            thumbnail_path: asset_source
-                .thumbnail
-                .as_ref()
-                .map(|thumbnail_source| archive_asset_path(&format!("{}-thumb", asset.id), thumbnail_source)),
+            thumbnail_path: asset_source.thumbnail.as_ref().map(|thumbnail_source| {
+                archive_asset_path(&format!("{}-thumb", asset.id), thumbnail_source)
+            }),
             width: asset.width,
             height: asset.height,
             x: asset.x,
@@ -838,14 +876,18 @@ fn write_project_file_to_path(
         }
     }
 
-    let contents = serde_json::to_vec_pretty(&persisted_project).map_err(|error| error.to_string())?;
+    let contents =
+        serde_json::to_vec_pretty(&persisted_project).map_err(|error| error.to_string())?;
     write_bytes_to_archive(&mut archive, PROJECT_ARCHIVE_METADATA_ENTRY, &contents)?;
     archive.finish().map_err(|error| error.to_string())?;
     cleanup_legacy_sidecar_directory(project_path);
     Ok(())
 }
 
-fn load_project_file_internal(app: Option<&AppHandle>, project_path: &Path) -> Result<ProjectPersistenceHandle, String> {
+fn load_project_file_internal(
+    app: Option<&AppHandle>,
+    project_path: &Path,
+) -> Result<ProjectPersistenceHandle, String> {
     let bytes = fs::read(project_path).map_err(|error| error.to_string())?;
 
     if let Some(handle) = load_archive_project(app, project_path, bytes.clone())? {
@@ -862,13 +904,19 @@ fn migrate_project_file(value: serde_json::Value) -> Result<PersistedProjectFile
         .unwrap_or(0);
 
     match schema_version {
-        1 | 2 => serde_json::from_value::<PersistedProjectFile>(value).map_err(|error| error.to_string()),
+        1 | 2 => {
+            serde_json::from_value::<PersistedProjectFile>(value).map_err(|error| error.to_string())
+        }
         version => Err(format!("Unsupported project schema version: {version}")),
     }
 }
 
 #[tauri::command]
-pub fn ingest_image_asset(app: AppHandle, filename: String, bytes: Vec<u8>) -> Result<String, String> {
+pub fn ingest_image_asset(
+    app: AppHandle,
+    filename: String,
+    bytes: Vec<u8>,
+) -> Result<String, String> {
     let directory = managed_import_directory(&app)?;
     let extension = Path::new(&filename)
         .extension()
@@ -895,7 +943,10 @@ pub fn load_project_file(app: AppHandle, path: String) -> Result<ProjectPersiste
 }
 
 #[tauri::command]
-pub fn save_project_file(app: AppHandle, request: SaveProjectRequest) -> Result<SaveProjectResult, String> {
+pub fn save_project_file(
+    app: AppHandle,
+    request: SaveProjectRequest,
+) -> Result<SaveProjectResult, String> {
     let project_path = PathBuf::from(&request.path);
     write_project_file_to_path(&project_path, &request.project, &request.asset_sources)?;
     let recent_projects = upsert_recent_project(&app, &project_path, &request.project.name)?;
@@ -1039,7 +1090,12 @@ mod tests {
             },
         ];
 
-        let source = resolve_startup_project_source(false, Path::new("/tmp/autosave.aref"), None, &recent_items);
+        let source = resolve_startup_project_source(
+            false,
+            Path::new("/tmp/autosave.aref"),
+            None,
+            &recent_items,
+        );
 
         assert_eq!(
             source,
@@ -1054,7 +1110,8 @@ mod tests {
 
     #[test]
     fn writes_and_loads_project_file_roundtrip() {
-        let test_directory = std::env::temp_dir().join(format!("aref-roundtrip-{}", Uuid::new_v4()));
+        let test_directory =
+            std::env::temp_dir().join(format!("aref-roundtrip-{}", Uuid::new_v4()));
         fs::create_dir_all(&test_directory).expect("create temp directory");
         let project_path = test_directory.join("roundtrip.aref");
         let project = sample_project();
@@ -1067,7 +1124,8 @@ mod tests {
             thumbnail: None,
         }];
 
-        write_project_file_to_path(&project_path, &project, &asset_sources).expect("write project file");
+        write_project_file_to_path(&project_path, &project, &asset_sources)
+            .expect("write project file");
         let archive_bytes = fs::read(&project_path).expect("read archive");
         let mut archive = ZipArchive::new(Cursor::new(archive_bytes)).expect("zip archive");
         assert!(archive.by_name(PROJECT_ARCHIVE_METADATA_ENTRY).is_ok());
@@ -1094,7 +1152,8 @@ mod tests {
         let project_path = test_directory.join("legacy.aref");
         let asset_directory = test_directory.join("legacy.aref-assets");
         fs::create_dir_all(&asset_directory).expect("create legacy asset dir");
-        fs::write(asset_directory.join("asset-1.png"), vec![1, 2, 3, 4]).expect("write legacy asset");
+        fs::write(asset_directory.join("asset-1.png"), vec![1, 2, 3, 4])
+            .expect("write legacy asset");
 
         let legacy_project = json!({
             "schema": PROJECT_SCHEMA,

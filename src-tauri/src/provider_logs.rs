@@ -1,7 +1,4 @@
-use std::{
-    fs,
-    path::PathBuf,
-};
+use std::{fs, path::PathBuf};
 
 use serde::Serialize;
 use serde_json::Value;
@@ -53,7 +50,8 @@ fn extract_first_string(value: &Value, keys: &[&str]) -> Option<String> {
 }
 
 fn extract_first_u64(value: &Value, keys: &[&str]) -> Option<u64> {
-    keys.iter().find_map(|key| value.get(*key).and_then(Value::as_u64))
+    keys.iter()
+        .find_map(|key| value.get(*key).and_then(Value::as_u64))
 }
 
 fn extract_provider_request_id(value: &Value) -> Option<String> {

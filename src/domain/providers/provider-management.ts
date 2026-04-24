@@ -83,19 +83,19 @@ export function mapOpenAiOAuthAvailability(options: {
   }
 
   if (snapshot.oauthStatus === "auth_required" || snapshot.codexAuthStatus === "unauthed" || snapshot.codexAuthStatus === "missing") {
-    return createAvailability("auth-required", "Auth required", "Finish the OAuth login flow before generating.");
+    return createAvailability("auth-required", "Login needed", "Log in with ChatGPT to enable OAuth generation.");
   }
 
   if (!snapshot.available || snapshot.oauthStatus === "offline") {
-    return createAvailability("unavailable", "Unavailable", "The local OAuth bridge is offline or not responding.");
+    return createAvailability("auth-required", "Starting", "Aref will start the local OAuth bridge automatically.");
   }
 
   if (snapshot.oauthStatus === "starting") {
-    return createAvailability("unavailable", "Unavailable", "The OAuth bridge is still starting.");
+    return createAvailability("auth-required", "Starting", "Aref is starting the local OAuth bridge.");
   }
 
   if (snapshot.oauthStatus === "ready") {
-    return createAvailability("available", "Available", `OAuth ready at ${snapshot.baseUrl}.`);
+    return createAvailability("available", "Ready", "ChatGPT OAuth is ready.");
   }
 
   return createAvailability("unavailable", "Unavailable", "OAuth status could not be determined.");
@@ -129,6 +129,10 @@ export function getResolvedOpenAiAuthMethod(
   }
 
   if (isProviderAvailabilityAvailable(availabilityByMethod[desiredMethod])) {
+    return desiredMethod;
+  }
+
+  if (desiredMethod === "oauth" && availabilityByMethod.oauth.state === "auth-required") {
     return desiredMethod;
   }
 

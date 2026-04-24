@@ -82,7 +82,7 @@ describe("provider management", () => {
         status: "idle",
         error: null,
       }).state,
-    ).toBe("unavailable");
+    ).toBe("auth-required");
   });
 
   it("maps mock provider gating to disabled or available", () => {
@@ -90,7 +90,7 @@ describe("provider management", () => {
     expect(mapMockProviderAvailability(true).state).toBe("available");
   });
 
-  it("keeps OAuth selected when the only alternative is merely auth-required", () => {
+  it("keeps OAuth selected while the local OAuth bridge is being prepared", () => {
     const resolvedMethod = getResolvedOpenAiAuthMethod("oauth", {
       oauth: mapOpenAiOAuthAvailability({
         snapshot: {

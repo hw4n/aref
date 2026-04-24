@@ -153,6 +153,43 @@ export function useProviderManagement() {
     [generationDraft.provider, providers],
   );
   const availabilitySignatureRef = useRef<string | null>(null);
+  const oauthAutoStartSignatureRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (openAiResolvedMethod !== "oauth" || !isDesktopIma2SidecarAvailable) {
+      oauthAutoStartSignatureRef.current = null;
+      return;
+    }
+
+    if (ima2SidecarSettingsStatus !== "idle" || ima2SidecarSettings.oauthStatus === "ready") {
+      return;
+    }
+
+    if (ima2SidecarSettings.oauthStatus === "auth_required") {
+      return;
+    }
+
+    const signature = [
+      ima2SidecarSettings.baseUrl,
+      ima2SidecarSettings.oauthStatus,
+      ima2SidecarSettings.codexAuthStatus,
+    ].join("|");
+
+    if (oauthAutoStartSignatureRef.current === signature) {
+      return;
+    }
+
+    oauthAutoStartSignatureRef.current = signature;
+    void startIma2SidecarProxy();
+  }, [
+    ima2SidecarSettings.baseUrl,
+    ima2SidecarSettings.codexAuthStatus,
+    ima2SidecarSettings.oauthStatus,
+    ima2SidecarSettingsStatus,
+    isDesktopIma2SidecarAvailable,
+    openAiResolvedMethod,
+    startIma2SidecarProxy,
+  ]);
 
   useEffect(() => {
     const signature = JSON.stringify({

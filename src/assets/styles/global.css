@@ -760,6 +760,65 @@ button:disabled {
   font-size: 0.76rem;
 }
 
+.oauth-card {
+  display: grid;
+  gap: 12px;
+  padding: 0.85rem;
+  border: 1px solid rgba(127, 150, 255, 0.28);
+  background: linear-gradient(135deg, rgba(127, 150, 255, 0.12), rgba(255, 255, 255, 0.025));
+}
+
+.oauth-card__header {
+  display: grid;
+  gap: 10px;
+}
+
+.oauth-card__header span {
+  display: grid;
+  gap: 4px;
+}
+
+.oauth-card__header strong {
+  font-size: 0.9rem;
+}
+
+.oauth-card__header em,
+.oauth-card__hint {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  font-style: normal;
+}
+
+.settings-action--primary {
+  width: 100%;
+  justify-content: center;
+  border-color: rgba(127, 150, 255, 0.5);
+  background: rgba(127, 150, 255, 0.16);
+}
+
+.settings-advanced {
+  display: grid;
+  gap: 10px;
+  padding: 0.75rem;
+  border: 1px dashed var(--border-strong);
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.settings-advanced[open] {
+  display: grid;
+}
+
+.settings-advanced summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 0.76rem;
+}
+
+.settings-advanced > :not(summary) {
+  margin-top: 10px;
+}
+
 .toggle-row {
   display: flex;
   align-items: center;

@@ -259,7 +259,10 @@ fn read_stored_openai_settings(app: &AppHandle) -> Result<Option<StoredOpenAiSet
         .map_err(|error| error.to_string())
 }
 
-fn write_stored_openai_settings(app: &AppHandle, settings: &StoredOpenAiSettings) -> Result<(), String> {
+fn write_stored_openai_settings(
+    app: &AppHandle,
+    settings: &StoredOpenAiSettings,
+) -> Result<(), String> {
     let path = openai_settings_path(app)?;
     ensure_parent_directory(&path)?;
     let contents = serde_json::to_string_pretty(settings).map_err(|error| error.to_string())?;
@@ -309,7 +312,8 @@ fn settings_snapshot_from_resolved(settings: ResolvedOpenAiSettings) -> OpenAiSe
 }
 
 fn api_key_last4(value: &str) -> String {
-    value.chars()
+    value
+        .chars()
         .rev()
         .take(4)
         .collect::<String>()
@@ -319,7 +323,10 @@ fn api_key_last4(value: &str) -> String {
 }
 
 fn compose_prompt(prompt: &str, negative_prompt: Option<&str>) -> String {
-    match negative_prompt.map(str::trim).filter(|value| !value.is_empty()) {
+    match negative_prompt
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         Some(negative) => format!("{prompt}\n\nAvoid: {negative}"),
         None => prompt.to_string(),
     }
@@ -335,7 +342,10 @@ fn aspect_ratio_to_openai_size(aspect_ratio: &str) -> (&'static str, u32, u32) {
     }
 }
 
-fn build_openai_headers(settings: &ResolvedOpenAiSettings, client_request_id: &str) -> Result<HeaderMap, String> {
+fn build_openai_headers(
+    settings: &ResolvedOpenAiSettings,
+    client_request_id: &str,
+) -> Result<HeaderMap, String> {
     let api_key = settings
         .api_key
         .as_ref()
@@ -686,7 +696,9 @@ async fn execute_openai_request(
             .ok()
             .and_then(|envelope| {
                 envelope.error.map(|error| {
-                    let message = error.message.unwrap_or_else(|| "Unknown OpenAI error".to_string());
+                    let message = error
+                        .message
+                        .unwrap_or_else(|| "Unknown OpenAI error".to_string());
                     match (error.code, error.r#type) {
                         (Some(code), Some(kind)) => format!("{message} [{code} / {kind}]"),
                         (Some(code), None) => format!("{message} [{code}]"),
@@ -697,7 +709,11 @@ async fn execute_openai_request(
             })
             .unwrap_or(error_text);
 
-        return Err(format!("OpenAI request failed ({}): {}", status.as_u16(), parsed_message));
+        return Err(format!(
+            "OpenAI request failed ({}): {}",
+            status.as_u16(),
+            parsed_message
+        ));
     }
 
     let payload = response
@@ -712,7 +728,9 @@ async fn execute_openai_request(
         let encoded = image
             .b64_json
             .ok_or_else(|| "OpenAI response did not include image bytes.".to_string())?;
-        let bytes = STANDARD.decode(encoded).map_err(|error| error.to_string())?;
+        let bytes = STANDARD
+            .decode(encoded)
+            .map_err(|error| error.to_string())?;
         let file_name = format!("{operation_id}-{}.png", index + 1);
         let target_path = generated_directory.join(&file_name);
         fs::write(&target_path, bytes).map_err(|error| error.to_string())?;
@@ -749,13 +767,11 @@ pub fn save_openai_settings(
         base_url: None,
     });
     let settings = StoredOpenAiSettings {
-        api_key: input.api_key.map(|value| value.trim().to_string()).and_then(|value| {
-            if value.is_empty() {
-                None
-            } else {
-                Some(value)
-            }
-        }).or(existing.api_key),
+        api_key: input
+            .api_key
+            .map(|value| value.trim().to_string())
+            .and_then(|value| if value.is_empty() { None } else { Some(value) })
+            .or(existing.api_key),
         organization_id: input
             .organization_id
             .map(|value| value.trim().to_string())
@@ -907,7 +923,9 @@ pub async fn cancel_openai_generation(
 ) -> Result<(), String> {
     let entry = {
         let operations = registry.operations.lock().await;
-        operations.get(&operation_id).map(|entry| (Arc::clone(&entry.record), entry.cancel_tx.clone()))
+        operations
+            .get(&operation_id)
+            .map(|entry| (Arc::clone(&entry.record), entry.cancel_tx.clone()))
     };
 
     if let Some((record, cancel_tx)) = entry {
@@ -941,10 +959,25 @@ mod tests {
             aspect_ratio_to_openai_size("unspecified"),
             ("1024x1024", 1024, 1024)
         );
-        assert_eq!(aspect_ratio_to_openai_size("1:1"), ("1024x1024", 1024, 1024));
-        assert_eq!(aspect_ratio_to_openai_size("4:3"), ("1536x1024", 1536, 1024));
-        assert_eq!(aspect_ratio_to_openai_size("3:4"), ("1024x1536", 1024, 1536));
-        assert_eq!(aspect_ratio_to_openai_size("16:9"), ("1792x1024", 1792, 1024));
-        assert_eq!(aspect_ratio_to_openai_size("9:16"), ("1024x1792", 1024, 1792));
+        assert_eq!(
+            aspect_ratio_to_openai_size("1:1"),
+            ("1024x1024", 1024, 1024)
+        );
+        assert_eq!(
+            aspect_ratio_to_openai_size("4:3"),
+            ("1536x1024", 1536, 1024)
+        );
+        assert_eq!(
+            aspect_ratio_to_openai_size("3:4"),
+            ("1024x1536", 1024, 1536)
+        );
+        assert_eq!(
+            aspect_ratio_to_openai_size("16:9"),
+            ("1792x1024", 1792, 1024)
+        );
+        assert_eq!(
+            aspect_ratio_to_openai_size("9:16"),
+            ("1024x1792", 1024, 1792)
+        );
     }
 }

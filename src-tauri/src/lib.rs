@@ -1,7 +1,7 @@
 mod ima2_sidecar;
 mod openai_provider;
-mod provider_logs;
 mod project_persistence;
+mod provider_logs;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {

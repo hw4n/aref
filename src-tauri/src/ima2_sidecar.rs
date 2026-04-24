@@ -19,6 +19,9 @@ use tauri::{AppHandle, Manager, State};
 use tokio::sync::{watch, Mutex};
 use uuid::Uuid;
 
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
 const DEFAULT_IMA2_SIDECAR_BASE_URL: &str = "http://127.0.0.1:10531";
 const IMA2_SIDECAR_SETTINGS_FILENAME: &str = "ima2-sidecar-settings.json";
 const IMA2_SIDECAR_REQUEST_LOG_FILENAME: &str = "ima2-sidecar-requests.jsonl";
@@ -48,6 +51,13 @@ struct Ima2SidecarOperationEntry {
 struct ManagedIma2Proxy {
     child: Child,
     base_url: String,
+}
+
+impl Drop for ManagedIma2Proxy {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
 }
 
 #[derive(Debug, Default, Clone)]
@@ -223,7 +233,9 @@ fn ima2_sidecar_generated_directory(app: &AppHandle) -> Result<PathBuf, String> 
     Ok(directory)
 }
 
-fn read_stored_ima2_sidecar_settings(app: &AppHandle) -> Result<Option<StoredIma2SidecarSettings>, String> {
+fn read_stored_ima2_sidecar_settings(
+    app: &AppHandle,
+) -> Result<Option<StoredIma2SidecarSettings>, String> {
     let path = ima2_sidecar_settings_path(app)?;
 
     if !path.exists() {
@@ -247,9 +259,8 @@ fn write_stored_ima2_sidecar_settings(
 }
 
 fn resolve_ima2_sidecar_settings(app: &AppHandle) -> Result<ResolvedIma2SidecarSettings, String> {
-    let stored = read_stored_ima2_sidecar_settings(app)?.unwrap_or(StoredIma2SidecarSettings {
-        base_url: None,
-    });
+    let stored = read_stored_ima2_sidecar_settings(app)?
+        .unwrap_or(StoredIma2SidecarSettings { base_url: None });
     let env_base_url = trim_to_option(env::var("AREF_CHATGPT_OAUTH_URL").ok())
         .or_else(|| trim_to_option(env::var("OPENAI_OAUTH_PROXY_URL").ok()))
         .or_else(|| trim_to_option(env::var("IMA2_SIDECAR_URL").ok()));
@@ -269,7 +280,10 @@ fn resolve_ima2_sidecar_settings(app: &AppHandle) -> Result<ResolvedIma2SidecarS
     })
 }
 
-fn append_ima2_sidecar_log(app: &AppHandle, entry: &Ima2SidecarRequestLogEntry) -> Result<(), String> {
+fn append_ima2_sidecar_log(
+    app: &AppHandle,
+    entry: &Ima2SidecarRequestLogEntry,
+) -> Result<(), String> {
     let path = ima2_sidecar_log_path(app)?;
     ensure_parent_directory(&path)?;
     let line = serde_json::to_string(entry).map_err(|error| error.to_string())?;
@@ -282,7 +296,10 @@ fn append_ima2_sidecar_log(app: &AppHandle, entry: &Ima2SidecarRequestLogEntry) 
 }
 
 fn compose_prompt(prompt: &str, negative_prompt: Option<&str>) -> String {
-    match negative_prompt.map(str::trim).filter(|value| !value.is_empty()) {
+    match negative_prompt
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         Some(negative) => format!("{prompt}\n\nAvoid: {negative}"),
         None => prompt.to_string(),
     }
@@ -312,7 +329,9 @@ fn parse_data_url(data_url: &str) -> Result<(String, Vec<u8>), String> {
         .next()
         .unwrap_or("image/png")
         .to_string();
-    let bytes = STANDARD.decode(encoded).map_err(|error| error.to_string())?;
+    let bytes = STANDARD
+        .decode(encoded)
+        .map_err(|error| error.to_string())?;
     Ok((mime_type, bytes))
 }
 
@@ -337,7 +356,9 @@ fn parse_generated_image_payload(payload: &str) -> Result<(String, Vec<u8>), Str
         return parse_data_url(payload);
     }
 
-    let bytes = STANDARD.decode(payload).map_err(|error| error.to_string())?;
+    let bytes = STANDARD
+        .decode(payload)
+        .map_err(|error| error.to_string())?;
     Ok((infer_mime_type_from_bytes(&bytes).to_string(), bytes))
 }
 
@@ -409,9 +430,24 @@ fn npx_binary() -> &'static str {
     }
 }
 
+fn hidden_command(binary: &str) -> Command {
+    #[cfg(target_os = "windows")]
+    {
+        let mut command = Command::new(binary);
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        command.creation_flags(CREATE_NO_WINDOW);
+        command
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        Command::new(binary)
+    }
+}
+
 fn probe_codex_login_status() -> String {
     for binary in codex_binary_candidates() {
-        let mut child = match Command::new(binary)
+        let mut child = match hidden_command(binary)
             .args(["login", "status"])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -544,7 +580,12 @@ fn extract_error_message(value: &Value) -> Option<String> {
         .and_then(|error| error.get("message"))
         .and_then(Value::as_str)
         .map(str::to_string)
-        .or_else(|| value.get("message").and_then(Value::as_str).map(str::to_string))
+        .or_else(|| {
+            value
+                .get("message")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
 }
 
 fn extract_text_fragments(value: &Value, fragments: &mut Vec<String>) {
@@ -634,7 +675,10 @@ fn parse_sse_response_for_image(
     }
 
     if let Some(image) = image {
-        return Ok((request_id.unwrap_or_else(|| Uuid::new_v4().to_string()), image));
+        return Ok((
+            request_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
+            image,
+        ));
     }
 
     if let Some(error) = last_error {
@@ -656,7 +700,12 @@ fn parse_json_response_for_image(
 
     let image = extract_generated_images(&payload).into_iter().next();
     let request_id = fallback_request_id
-        .or_else(|| payload.get("id").and_then(Value::as_str).map(str::to_string))
+        .or_else(|| {
+            payload
+                .get("id")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
         .unwrap_or_else(|| Uuid::new_v4().to_string());
 
     if let Some(image) = image {
@@ -707,7 +756,10 @@ async fn cleanup_managed_proxy(runtime: &Ima2SidecarRuntimeState) -> Result<(), 
     Ok(())
 }
 
-async fn managed_proxy_matches(runtime: &Ima2SidecarRuntimeState, base_url: &str) -> Result<bool, String> {
+async fn managed_proxy_matches(
+    runtime: &Ima2SidecarRuntimeState,
+    base_url: &str,
+) -> Result<bool, String> {
     cleanup_managed_proxy(runtime).await?;
 
     let guard = runtime.proxy.lock().await;
@@ -775,7 +827,7 @@ async fn fetch_ima2_sidecar_snapshot(
 }
 
 fn try_spawn_process(binary: &str, args: &[&str]) -> Result<(), String> {
-    Command::new(binary)
+    hidden_command(binary)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -812,7 +864,7 @@ async fn start_managed_proxy(
     stop_managed_proxy(runtime).await?;
 
     let port = parse_proxy_port(&settings.base_url)?;
-    let child = Command::new(npx_binary())
+    let child = hidden_command(npx_binary())
         .args(["openai-oauth", "--port", &port.to_string()])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -825,9 +877,25 @@ async fn start_managed_proxy(
         base_url: settings.base_url.clone(),
     });
 
-    tokio::time::sleep(Duration::from_millis(IMA2_SIDECAR_PROXY_WARMUP_MILLISECONDS)).await;
+    tokio::time::sleep(Duration::from_millis(
+        IMA2_SIDECAR_PROXY_WARMUP_MILLISECONDS,
+    ))
+    .await;
 
     fetch_ima2_sidecar_snapshot(app, runtime).await
+}
+
+async fn ensure_managed_proxy_ready(
+    app: &AppHandle,
+    runtime: &Ima2SidecarRuntimeState,
+) -> Result<Ima2SidecarSettingsSnapshot, String> {
+    let snapshot = fetch_ima2_sidecar_snapshot(app, runtime).await?;
+
+    if snapshot.oauth_status == "ready" || snapshot.oauth_status == "auth_required" {
+        return Ok(snapshot);
+    }
+
+    start_managed_proxy(app, runtime).await
 }
 
 async fn update_record(
@@ -915,7 +983,9 @@ async fn execute_single_oauth_request(
         if let Ok(result) = parse_sse_response_for_image(&body_text, response_request_id.clone()) {
             return Ok(result);
         }
-    } else if let Ok(result) = parse_json_response_for_image(&body_text, response_request_id.clone()) {
+    } else if let Ok(result) =
+        parse_json_response_for_image(&body_text, response_request_id.clone())
+    {
         return Ok(result);
     }
 
@@ -972,15 +1042,9 @@ async fn execute_ima2_sidecar_request(
     let mut request_ids = Vec::with_capacity(request.settings.image_count as usize);
 
     for index in 0..request.settings.image_count {
-        let (request_id, payload) = execute_single_oauth_request(
-            &client,
-            base_url,
-            request,
-            &prompt,
-            size,
-            &mut cancel_rx,
-        )
-        .await?;
+        let (request_id, payload) =
+            execute_single_oauth_request(&client, base_url, request, &prompt, size, &mut cancel_rx)
+                .await?;
         let (mime_type, bytes) = parse_generated_image_payload(&payload)?;
         let extension = extension_from_mime_type(&mime_type);
         let file_name = format!("{}-{}.{}", operation_id, index + 1, extension);
@@ -1042,14 +1106,9 @@ async fn run_ima2_sidecar_operation(
         },
     );
 
-    let result = execute_ima2_sidecar_request(
-        &app,
-        &base_url,
-        &request,
-        &operation_id,
-        cancel_rx.clone(),
-    )
-    .await;
+    let result =
+        execute_ima2_sidecar_request(&app, &base_url, &request, &operation_id, cancel_rx.clone())
+            .await;
 
     match result {
         Ok((images, request_ids)) => {
@@ -1242,16 +1301,16 @@ pub async fn start_ima2_sidecar_generation(
         return Err("Prompt is required.".to_string());
     }
 
-    let snapshot = fetch_ima2_sidecar_snapshot(&app, runtime.inner()).await?;
+    let snapshot = ensure_managed_proxy_ready(&app, runtime.inner()).await?;
     if snapshot.oauth_status == "auth_required" {
-        return Err("ChatGPT OAuth needs Codex login before generation can start.".to_string());
+        return Err("ChatGPT OAuth needs login before generation can start.".to_string());
     }
     if snapshot.oauth_status == "starting" {
-        return Err("ChatGPT OAuth proxy is still starting. Press Check and retry.".to_string());
+        return Err("ChatGPT OAuth is still starting. Retry in a moment.".to_string());
     }
     if snapshot.oauth_status != "ready" {
         return Err(format!(
-            "ChatGPT OAuth proxy is not ready at {} ({})",
+            "ChatGPT OAuth is not ready at {} ({})",
             snapshot.base_url, snapshot.oauth_status
         ));
     }
@@ -1396,23 +1455,31 @@ mod tests {
             ]
         });
 
-        assert_eq!(extract_generated_images(&payload), vec!["ZmFrZS1pbWFnZQ==".to_string()]);
+        assert_eq!(
+            extract_generated_images(&payload),
+            vec!["ZmFrZS1pbWFnZQ==".to_string()]
+        );
     }
 
     #[test]
     fn parses_data_urls_and_raw_base64() {
         let png_data_url = "data:image/png;base64,iVBORw0KGgo=";
-        let (mime_type, _bytes) = parse_generated_image_payload(png_data_url).expect("data url should parse");
+        let (mime_type, _bytes) =
+            parse_generated_image_payload(png_data_url).expect("data url should parse");
         assert_eq!(mime_type, "image/png");
 
         let raw = STANDARD.encode([0x89, b'P', b'N', b'G', 0, 0, 0, 0]);
-        let (mime_type, _bytes) = parse_generated_image_payload(&raw).expect("raw base64 should parse");
+        let (mime_type, _bytes) =
+            parse_generated_image_payload(&raw).expect("raw base64 should parse");
         assert_eq!(mime_type, "image/png");
     }
 
     #[test]
     fn maps_canvas_aspect_ratios_to_oauth_proxy_sizes() {
-        assert_eq!(aspect_ratio_to_ima2_size("unspecified"), ("1024x1024", 1024, 1024));
+        assert_eq!(
+            aspect_ratio_to_ima2_size("unspecified"),
+            ("1024x1024", 1024, 1024)
+        );
         assert_eq!(aspect_ratio_to_ima2_size("1:1"), ("1024x1024", 1024, 1024));
         assert_eq!(aspect_ratio_to_ima2_size("4:3"), ("1536x1024", 1536, 1024));
         assert_eq!(aspect_ratio_to_ima2_size("3:4"), ("1024x1536", 1024, 1536));

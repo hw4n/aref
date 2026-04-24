@@ -139,6 +139,7 @@ export function LeftSidebar({
   const [openAiProjectId, setOpenAiProjectId] = useState("");
   const [openAiBaseUrl, setOpenAiBaseUrl] = useState(openAiSettings.baseUrl);
   const [ima2SidecarBaseUrl, setIma2SidecarBaseUrl] = useState(ima2SidecarSettings.baseUrl);
+  const [oauthFlowState, setOauthFlowState] = useState<"idle" | "starting" | "waiting" | "ready" | "error">("idle");
 
   useEffect(() => {
     setOpenAiOrganizationId(openAiSettings.organizationId ?? "");
@@ -188,6 +189,70 @@ export function LeftSidebar({
     () => orderProviderAuthMethods(["oauth", "api-key"]),
     [],
   );
+  const oauthNeedsLogin = ima2SidecarSettings.oauthStatus === "auth_required"
+    || ima2SidecarSettings.codexAuthStatus === "unauthed"
+    || ima2SidecarSettings.codexAuthStatus === "missing";
+  const oauthReady = ima2SidecarSettings.oauthStatus === "ready";
+  const oauthBusy = ima2SidecarSettingsStatus === "loading"
+    || ima2SidecarSettingsStatus === "saving"
+    || oauthFlowState === "starting"
+    || oauthFlowState === "waiting";
+  const oauthStatusTitle = oauthReady
+    ? "Ready"
+    : oauthFlowState === "waiting"
+      ? "Waiting for login"
+    : oauthNeedsLogin
+      ? "Login needed"
+      : ima2SidecarSettings.oauthStatus === "starting"
+        ? "Starting OAuth"
+        : "Preparing OAuth";
+  const oauthStatusDescription = oauthReady
+    ? "ChatGPT OAuth is ready. You can generate with your current ChatGPT session."
+    : oauthFlowState === "waiting"
+      ? "Finish the browser login. Aref will detect it automatically."
+    : oauthNeedsLogin
+      ? "Log in once with your ChatGPT account. Aref keeps the local OAuth bridge in the background."
+      : "Aref is starting the local OAuth bridge automatically.";
+  const oauthPrimaryActionLabel = oauthReady
+    ? "Ready"
+    : oauthNeedsLogin
+      ? "Log in with ChatGPT"
+      : oauthFlowState === "waiting"
+        ? "Waiting"
+        : "Retry connection";
+
+  useEffect(() => {
+    if (openAiAuthMethod !== "oauth" || oauthFlowState !== "waiting") {
+      return;
+    }
+
+    if (oauthReady) {
+      setOauthFlowState("ready");
+      pushToast({
+        kind: "success",
+        title: "OAuth ready",
+        description: "ChatGPT OAuth login was detected.",
+      });
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      void reloadIma2SidecarSettings();
+    }, 2500);
+    const timeoutId = window.setTimeout(() => {
+      setOauthFlowState("idle");
+      pushToast({
+        kind: "info",
+        title: "Still waiting for login",
+        description: "Finish the browser login, then return to Aref.",
+      });
+    }, 60_000);
+
+    return () => {
+      window.clearInterval(intervalId);
+      window.clearTimeout(timeoutId);
+    };
+  }, [oauthFlowState, oauthReady, openAiAuthMethod, pushToast, reloadIma2SidecarSettings]);
 
   const handleOpenSettings = (section: SettingsSurfaceSection) => {
     setSettingsSection(section);
@@ -315,7 +380,7 @@ export function LeftSidebar({
       title: "OAuth proxy started",
       description: nextSnapshot.available
         ? `${nextSnapshot.baseUrl} is responding.`
-        : `Started at ${nextSnapshot.baseUrl}. Press Check if it is still warming up.`,
+        : `Started at ${nextSnapshot.baseUrl}. Aref will keep checking in the background.`,
     });
   };
 
@@ -330,14 +395,57 @@ export function LeftSidebar({
       level: "info",
       scope: "auth",
       title: "OAuth login started",
-      message: "Codex login flow was launched from the provider settings.",
-      details: "Finish the browser login, then refresh provider availability.",
+      message: "ChatGPT login flow was launched from the provider settings.",
+      details: "Finish the browser login. Aref will detect it automatically.",
     });
     pushToast({
       kind: "info",
       title: "Login started",
-      description: "Finish the browser login, then press Check.",
+      description: "Finish the browser login. Aref will detect it automatically.",
     });
+  };
+
+  const handlePrepareIma2OAuth = async () => {
+    if (oauthReady) {
+      void reloadIma2SidecarSettings();
+      return;
+    }
+
+    setOauthFlowState("starting");
+
+    if (oauthNeedsLogin) {
+      const started = await startIma2SidecarLogin();
+
+      if (!started) {
+        setOauthFlowState("error");
+        pushToast({
+          kind: "error",
+          title: "Login could not start",
+          description: "Aref could not launch the ChatGPT login flow.",
+        });
+        return;
+      }
+
+      setOauthFlowState("waiting");
+      pushToast({
+        kind: "info",
+        title: "Login opened",
+        description: "Finish the browser login. Aref will detect it automatically.",
+      });
+      window.setTimeout(() => {
+        void reloadIma2SidecarSettings();
+      }, 1500);
+      return;
+    }
+
+    const nextSnapshot = await startIma2SidecarProxy();
+
+    if (!nextSnapshot) {
+      setOauthFlowState("error");
+      return;
+    }
+
+    setOauthFlowState(nextSnapshot.oauthStatus === "ready" ? "ready" : "idle");
   };
 
   const handleDeveloperModeToggle = (enabled: boolean) => {
@@ -515,59 +623,88 @@ export function LeftSidebar({
 
                 {openAiAuthMethod === "oauth" ? (
                   <>
-                    <label className="settings-field">
-                      <span>Proxy URL</span>
-                      <input
-                        disabled={!isDesktopIma2SidecarAvailable}
-                        placeholder="http://127.0.0.1:10531"
-                        type="text"
-                        value={ima2SidecarBaseUrl}
-                        onChange={(event) => setIma2SidecarBaseUrl(event.currentTarget.value)}
-                      />
-                    </label>
+                    <div className="oauth-card">
+                      <div className="oauth-card__header">
+                        <span>
+                          <strong>{oauthStatusTitle}</strong>
+                          <em>{oauthStatusDescription}</em>
+                        </span>
+                        <ProviderStatePill availability={openAiAvailabilityByMethod.oauth} />
+                      </div>
 
-                    <div className="settings-actions">
                       <button
-                        className="settings-action"
-                        disabled={!isDesktopIma2SidecarAvailable || ima2SidecarSettingsStatus === "saving"}
-                        onClick={() => void handleSaveIma2SidecarSettings()}
+                        className="settings-action settings-action--primary"
+                        disabled={!isDesktopIma2SidecarAvailable || oauthBusy || oauthReady}
+                        onClick={() => void handlePrepareIma2OAuth()}
                       >
                         <SparklesIcon size={14} />
-                        <span>Save</span>
+                        <span>{oauthBusy ? "Working" : oauthPrimaryActionLabel}</span>
                       </button>
-                      <button
-                        className="settings-action"
-                        disabled={!isDesktopIma2SidecarAvailable || ima2SidecarSettingsStatus === "saving"}
-                        onClick={() => void handleStartIma2Proxy()}
-                      >
-                        <RecentIcon size={14} />
-                        <span>Start Proxy</span>
-                      </button>
-                      <button
-                        className="settings-action"
-                        disabled={!isDesktopIma2SidecarAvailable || ima2SidecarSettingsStatus === "saving"}
-                        onClick={() => void handleStartIma2Login()}
-                      >
-                        <SourceIcon size={14} />
-                        <span>Login</span>
-                      </button>
-                      <button
-                        className="settings-action"
-                        disabled={!isDesktopIma2SidecarAvailable || ima2SidecarSettingsStatus === "loading"}
-                        onClick={() => void reloadIma2SidecarSettings()}
-                      >
-                        <SparklesIcon size={14} />
-                        <span>Check</span>
-                      </button>
-                      <button
-                        className="settings-action"
-                        disabled={!isDesktopIma2SidecarAvailable || ima2SidecarSettingsStatus === "saving"}
-                        onClick={() => void handleClearIma2SidecarSettings()}
-                      >
-                        <CancelIcon size={14} />
-                        <span>Reset</span>
-                      </button>
+
+                      {oauthFlowState === "waiting" ? (
+                        <p className="oauth-card__hint">Browser login is in progress. You can return here after it completes.</p>
+                      ) : null}
                     </div>
+
+                    {uiPreferences.developerMode ? (
+                      <details className="settings-advanced">
+                        <summary>Advanced OAuth bridge</summary>
+
+                        <label className="settings-field">
+                          <span>Proxy URL</span>
+                          <input
+                            disabled={!isDesktopIma2SidecarAvailable}
+                            placeholder="http://127.0.0.1:10531"
+                            type="text"
+                            value={ima2SidecarBaseUrl}
+                            onChange={(event) => setIma2SidecarBaseUrl(event.currentTarget.value)}
+                          />
+                        </label>
+
+                        <div className="settings-actions">
+                          <button
+                            className="settings-action"
+                            disabled={!isDesktopIma2SidecarAvailable || ima2SidecarSettingsStatus === "saving"}
+                            onClick={() => void handleSaveIma2SidecarSettings()}
+                          >
+                            <SparklesIcon size={14} />
+                            <span>Save URL</span>
+                          </button>
+                          <button
+                            className="settings-action"
+                            disabled={!isDesktopIma2SidecarAvailable || ima2SidecarSettingsStatus === "saving"}
+                            onClick={() => void handleStartIma2Proxy()}
+                          >
+                            <RecentIcon size={14} />
+                            <span>Restart Bridge</span>
+                          </button>
+                          <button
+                            className="settings-action"
+                            disabled={!isDesktopIma2SidecarAvailable || ima2SidecarSettingsStatus === "saving"}
+                            onClick={() => void handleStartIma2Login()}
+                          >
+                            <SourceIcon size={14} />
+                            <span>Launch Login</span>
+                          </button>
+                          <button
+                            className="settings-action"
+                            disabled={!isDesktopIma2SidecarAvailable || ima2SidecarSettingsStatus === "loading"}
+                            onClick={() => void reloadIma2SidecarSettings()}
+                          >
+                            <SparklesIcon size={14} />
+                            <span>Refresh</span>
+                          </button>
+                          <button
+                            className="settings-action"
+                            disabled={!isDesktopIma2SidecarAvailable || ima2SidecarSettingsStatus === "saving"}
+                            onClick={() => void handleClearIma2SidecarSettings()}
+                          >
+                            <CancelIcon size={14} />
+                            <span>Reset</span>
+                          </button>
+                        </div>
+                      </details>
+                    ) : null}
 
                     {ima2SidecarSettingsError ? (
                       <p className="settings-error">{ima2SidecarSettingsError}</p>
