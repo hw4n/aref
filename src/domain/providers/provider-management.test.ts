@@ -125,7 +125,7 @@ describe("provider management", () => {
     expect(resolvedMethod).toBe("oauth");
   });
 
-  it("overrides the selected method when another auth method is truly available", () => {
+  it("keeps API key selected while the user is configuring credentials", () => {
     const resolvedMethod = getResolvedOpenAiAuthMethod("api-key", {
       oauth: mapOpenAiOAuthAvailability({
         snapshot: {
@@ -157,7 +157,7 @@ describe("provider management", () => {
       }),
     });
 
-    expect(resolvedMethod).toBe("oauth");
+    expect(resolvedMethod).toBe("api-key");
   });
 
   it("does not override while the selected auth method is still loading", () => {

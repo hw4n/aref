@@ -199,27 +199,16 @@ export function LeftSidebar({
     || oauthFlowState === "waiting";
   const oauthStatusTitle = oauthReady
     ? "Ready"
-    : oauthFlowState === "waiting"
-      ? "Waiting for login"
     : oauthNeedsLogin
       ? "Login needed"
-      : ima2SidecarSettings.oauthStatus === "starting"
-        ? "Starting OAuth"
-        : "Preparing OAuth";
-  const oauthStatusDescription = oauthReady
-    ? "ChatGPT OAuth is ready. You can generate with your current ChatGPT session."
-    : oauthFlowState === "waiting"
-      ? "Finish the browser login. Aref will detect it automatically."
-    : oauthNeedsLogin
-      ? "Log in once with your ChatGPT account. Aref keeps the local OAuth bridge in the background."
-      : "Aref is starting the local OAuth bridge automatically.";
+      : "Not ready";
   const oauthPrimaryActionLabel = oauthReady
     ? "Ready"
     : oauthNeedsLogin
-      ? "Log in with ChatGPT"
+      ? "Log in"
       : oauthFlowState === "waiting"
         ? "Waiting"
-        : "Retry connection";
+        : "Retry";
 
   useEffect(() => {
     if (openAiAuthMethod !== "oauth" || oauthFlowState !== "waiting") {
@@ -231,7 +220,6 @@ export function LeftSidebar({
       pushToast({
         kind: "success",
         title: "OAuth ready",
-        description: "ChatGPT OAuth login was detected.",
       });
       return;
     }
@@ -243,8 +231,7 @@ export function LeftSidebar({
       setOauthFlowState("idle");
       pushToast({
         kind: "info",
-        title: "Still waiting for login",
-        description: "Finish the browser login, then return to Aref.",
+        title: "Login still needed",
       });
     }, 60_000);
 
@@ -378,9 +365,7 @@ export function LeftSidebar({
     pushToast({
       kind: nextSnapshot.available ? "success" : "info",
       title: "OAuth proxy started",
-      description: nextSnapshot.available
-        ? `${nextSnapshot.baseUrl} is responding.`
-        : `Started at ${nextSnapshot.baseUrl}. Aref will keep checking in the background.`,
+      description: nextSnapshot.oauthStatus,
     });
   };
 
@@ -396,12 +381,12 @@ export function LeftSidebar({
       scope: "auth",
       title: "OAuth login started",
       message: "ChatGPT login flow was launched from the provider settings.",
-      details: "Finish the browser login. Aref will detect it automatically.",
+      details: "Login pending.",
     });
     pushToast({
       kind: "info",
       title: "Login started",
-      description: "Finish the browser login. Aref will detect it automatically.",
+      description: "Login pending.",
     });
   };
 
@@ -421,7 +406,6 @@ export function LeftSidebar({
         pushToast({
           kind: "error",
           title: "Login could not start",
-          description: "Aref could not launch the ChatGPT login flow.",
         });
         return;
       }
@@ -430,7 +414,6 @@ export function LeftSidebar({
       pushToast({
         kind: "info",
         title: "Login opened",
-        description: "Finish the browser login. Aref will detect it automatically.",
       });
       window.setTimeout(() => {
         void reloadIma2SidecarSettings();
@@ -483,8 +466,6 @@ export function LeftSidebar({
 
   return (
     <aside className="left-sidebar">
-      
-
       <section className="left-sidebar__section">
         <header className="left-sidebar__section-header">
           <h2>Canvas</h2>
@@ -522,11 +503,9 @@ export function LeftSidebar({
                 <div className="provider-card__header">
                   <div>
                     <strong>{entry.label}</strong>
-                    
                   </div>
                   <ProviderStatePill availability={entry.availability} />
                 </div>
-                
               </div>
               <div className="provider-card__actions">
                 <button
@@ -588,7 +567,6 @@ export function LeftSidebar({
 
             {uiPreferences.settingsSection === "general" ? (
               <div className="settings-surface__content">
-                
                 <div className="settings-note">
                   <strong>Provider:</strong> <span>{activeProviderEntry?.label || "None"}</span>
                 </div>
@@ -597,11 +575,6 @@ export function LeftSidebar({
 
             {uiPreferences.settingsSection === "providers" ? (
               <div className="settings-surface__content">
-                <div className="settings-note">
-                  <strong>OpenAI</strong>
-                  <span>OAuth is preferred and shown first when both auth methods are available.</span>
-                </div>
-
                 <label className="settings-field">
                   <span>Authentication</span>
                   <select
@@ -616,21 +589,10 @@ export function LeftSidebar({
                   </select>
                 </label>
 
-                <div className="settings-status">
-                  <ProviderStatePill availability={openAiAvailabilityByMethod[openAiAuthMethod]} />
-                  <span>{openAiAvailabilityByMethod[openAiAuthMethod].reason}</span>
-                </div>
-
                 {openAiAuthMethod === "oauth" ? (
                   <>
-                    <div className="oauth-card">
-                      <div className="oauth-card__header">
-                        <span>
-                          <strong>{oauthStatusTitle}</strong>
-                          <em>{oauthStatusDescription}</em>
-                        </span>
-                        <ProviderStatePill availability={openAiAvailabilityByMethod.oauth} />
-                      </div>
+                    <section className="oauth-card">
+                      <strong>{oauthStatusTitle}</strong>
 
                       <button
                         className="settings-action settings-action--primary"
@@ -640,11 +602,7 @@ export function LeftSidebar({
                         <SparklesIcon size={14} />
                         <span>{oauthBusy ? "Working" : oauthPrimaryActionLabel}</span>
                       </button>
-
-                      {oauthFlowState === "waiting" ? (
-                        <p className="oauth-card__hint">Browser login is in progress. You can return here after it completes.</p>
-                      ) : null}
-                    </div>
+                    </section>
 
                     {uiPreferences.developerMode ? (
                       <details className="settings-advanced">

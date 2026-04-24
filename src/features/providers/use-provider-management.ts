@@ -156,7 +156,7 @@ export function useProviderManagement() {
   const oauthAutoStartSignatureRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (openAiResolvedMethod !== "oauth" || !isDesktopIma2SidecarAvailable) {
+    if (!isDesktopIma2SidecarAvailable) {
       oauthAutoStartSignatureRef.current = null;
       return;
     }
@@ -187,8 +187,28 @@ export function useProviderManagement() {
     ima2SidecarSettings.oauthStatus,
     ima2SidecarSettingsStatus,
     isDesktopIma2SidecarAvailable,
-    openAiResolvedMethod,
     startIma2SidecarProxy,
+  ]);
+
+  useEffect(() => {
+    if (
+      !isDesktopIma2SidecarAvailable
+      || ima2SidecarSettingsStatus !== "idle"
+      || ima2SidecarSettings.oauthStatus !== "starting"
+    ) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      void reloadIma2SidecarSettings();
+    }, 2000);
+
+    return () => window.clearInterval(intervalId);
+  }, [
+    ima2SidecarSettings.oauthStatus,
+    ima2SidecarSettingsStatus,
+    isDesktopIma2SidecarAvailable,
+    reloadIma2SidecarSettings,
   ]);
 
   useEffect(() => {
@@ -215,30 +235,6 @@ export function useProviderManagement() {
       ].join(" | "),
     });
   }, [appendDiagnosticLog, mockAvailability, openAiAvailabilityByMethod]);
-
-  useEffect(() => {
-    if (openAiResolvedMethod === openAiAuthMethod) {
-      return;
-    }
-
-    setProviderAuthMethod("openai", openAiResolvedMethod);
-    appendDiagnosticLog({
-      level: "warning",
-      scope: "provider",
-      title: "Authentication method overridden",
-      message: `OpenAI switched from ${openAiAuthMethod} to ${openAiResolvedMethod}.`,
-      details: [
-        `Selected method: ${openAiAvailabilityByMethod[openAiAuthMethod].reason}`,
-        `Resolved method: ${openAiAvailabilityByMethod[openAiResolvedMethod].reason}`,
-      ].join(" | "),
-    });
-  }, [
-    appendDiagnosticLog,
-    openAiAuthMethod,
-    openAiAvailabilityByMethod,
-    openAiResolvedMethod,
-    setProviderAuthMethod,
-  ]);
 
   useEffect(() => {
     if (generationDraft.provider === "mock" && !uiPreferences.mockProviderEnabled) {
@@ -322,7 +318,7 @@ export function useProviderManagement() {
   return {
     activeProvider,
     providerEntries,
-    openAiAuthMethod: openAiResolvedMethod,
+    openAiAuthMethod,
     openAiAvailabilityByMethod,
     openAiSettings,
     openAiSettingsError,

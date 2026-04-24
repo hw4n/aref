@@ -762,32 +762,14 @@ button:disabled {
 
 .oauth-card {
   display: grid;
-  gap: 12px;
+  gap: 10px;
   padding: 0.85rem;
   border: 1px solid rgba(127, 150, 255, 0.28);
   background: linear-gradient(135deg, rgba(127, 150, 255, 0.12), rgba(255, 255, 255, 0.025));
 }
 
-.oauth-card__header {
-  display: grid;
-  gap: 10px;
-}
-
-.oauth-card__header span {
-  display: grid;
-  gap: 4px;
-}
-
-.oauth-card__header strong {
+.oauth-card > strong {
   font-size: 0.9rem;
-}
-
-.oauth-card__header em,
-.oauth-card__hint {
-  margin: 0;
-  color: var(--text-muted);
-  font-size: 0.76rem;
-  font-style: normal;
 }
 
 .settings-action--primary {

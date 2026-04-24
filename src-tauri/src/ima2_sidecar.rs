@@ -29,6 +29,8 @@ const IMA2_SIDECAR_GENERATED_DIRECTORY: &str = "ima2-sidecar-generated";
 const IMA2_SIDECAR_REQUEST_TIMEOUT_SECONDS: u64 = 240;
 const IMA2_SIDECAR_HEALTH_TIMEOUT_SECONDS: u64 = 3;
 const IMA2_SIDECAR_PROXY_WARMUP_MILLISECONDS: u64 = 900;
+const IMA2_SIDECAR_PROXY_READY_TIMEOUT_MILLISECONDS: u64 = 12_000;
+const IMA2_SIDECAR_PROXY_READY_POLL_MILLISECONDS: u64 = 750;
 const CODEX_STATUS_TIMEOUT_MILLISECONDS: u64 = 2_000;
 const OAUTH_IMAGE_DEVELOPER_PROMPT: &str =
     "You are an image generator for a desktop reference-board app. Always use the image_generation tool and do not return a text-only answer. Generate exactly one image that follows the user's prompt and references.";
@@ -847,7 +849,7 @@ fn launch_codex_login_process() -> Result<(), String> {
         }
     }
 
-    try_spawn_process(npx_binary(), &["@openai/codex", "login"])
+    try_spawn_process(npx_binary(), &["--yes", "@openai/codex", "login"])
 }
 
 async fn start_managed_proxy(
@@ -865,7 +867,7 @@ async fn start_managed_proxy(
 
     let port = parse_proxy_port(&settings.base_url)?;
     let child = hidden_command(npx_binary())
-        .args(["openai-oauth", "--port", &port.to_string()])
+        .args(["--yes", "openai-oauth", "--port", &port.to_string()])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -877,12 +879,25 @@ async fn start_managed_proxy(
         base_url: settings.base_url.clone(),
     });
 
+    let deadline =
+        Instant::now() + Duration::from_millis(IMA2_SIDECAR_PROXY_READY_TIMEOUT_MILLISECONDS);
     tokio::time::sleep(Duration::from_millis(
         IMA2_SIDECAR_PROXY_WARMUP_MILLISECONDS,
     ))
     .await;
 
-    fetch_ima2_sidecar_snapshot(app, runtime).await
+    loop {
+        let snapshot = fetch_ima2_sidecar_snapshot(app, runtime).await?;
+
+        if snapshot.oauth_status != "starting" || Instant::now() >= deadline {
+            return Ok(snapshot);
+        }
+
+        tokio::time::sleep(Duration::from_millis(
+            IMA2_SIDECAR_PROXY_READY_POLL_MILLISECONDS,
+        ))
+        .await;
+    }
 }
 
 async fn ensure_managed_proxy_ready(
