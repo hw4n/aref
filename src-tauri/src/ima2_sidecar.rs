@@ -1107,29 +1107,37 @@ fn try_spawn_process(
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg_attr(not(any(target_os = "windows", test)), allow(dead_code))]
 fn build_windows_env_set(name: &str, value: &Path) -> String {
     format!("set \"{}={}\"", name, value.to_string_lossy())
 }
 
-#[cfg(target_os = "windows")]
-fn build_windows_visible_login_command(auth_env: &ArefCodexAuthEnv) -> String {
+#[cfg_attr(not(any(target_os = "windows", test)), allow(dead_code))]
+fn build_windows_visible_login_command(auth_env: &ArefCodexAuthEnv, npx_binary: &str) -> String {
     let login_args = ["--yes", "@openai/codex@latest", "login", "--device-auth"];
     [
+        "title Aref Codex Login".to_string(),
         build_windows_env_set("CODEX_HOME", &auth_env.codex_home),
         build_windows_env_set("CHATGPT_LOCAL_HOME", &auth_env.chatgpt_local_home),
-        build_windows_cmd_line(npx_binary(), &login_args),
+        build_windows_cmd_line(npx_binary, &login_args),
     ]
-    .join(" ^&^& ")
+    .join(" && ")
+}
+
+#[cfg(target_os = "windows")]
+fn visible_windows_command(binary: &str) -> Command {
+    let mut command = Command::new(binary);
+    const CREATE_NEW_CONSOLE: u32 = 0x00000010;
+    command.creation_flags(CREATE_NEW_CONSOLE);
+    command
 }
 
 #[cfg(target_os = "windows")]
 fn launch_windows_visible_codex_login(auth_env: &ArefCodexAuthEnv) -> Result<(), String> {
-    let login_command = build_windows_visible_login_command(auth_env);
-    let start_command = format!("start \"Aref Codex Login\" cmd.exe /k {login_command}");
-    let mut child = hidden_command("cmd.exe")
-        .args(["/d", "/s", "/c"])
-        .arg(start_command)
+    let login_command = build_windows_visible_login_command(auth_env, npx_binary());
+    let mut child = visible_windows_command("cmd.exe")
+        .args(["/d", "/k"])
+        .arg(login_command)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -1937,6 +1945,31 @@ mod tests {
             build_windows_cmd_line("npx.cmd", &["--yes", "C:\\Users\\Aref User\\auth.json"]),
             "npx.cmd --yes \"C:\\Users\\Aref User\\auth.json\""
         );
+    }
+
+    #[test]
+    fn builds_visible_windows_login_command_without_start_title_quoting() {
+        let auth_env = ArefCodexAuthEnv {
+            codex_home: PathBuf::from(
+                "C:\\Users\\Aref User\\AppData\\Roaming\\Aref\\codex-oauth\\codex",
+            ),
+            chatgpt_local_home: PathBuf::from(
+                "C:\\Users\\Aref User\\AppData\\Roaming\\Aref\\codex-oauth\\chatgpt-local",
+            ),
+            auth_file: PathBuf::from(
+                "C:\\Users\\Aref User\\AppData\\Roaming\\Aref\\codex-oauth\\codex\\auth.json",
+            ),
+        };
+        let command = build_windows_visible_login_command(&auth_env, "npx.cmd");
+
+        assert!(command.starts_with("title Aref Codex Login && "));
+        assert!(command.contains(
+            "set \"CODEX_HOME=C:\\Users\\Aref User\\AppData\\Roaming\\Aref\\codex-oauth\\codex\""
+        ));
+        assert!(command.contains("set \"CHATGPT_LOCAL_HOME=C:\\Users\\Aref User\\AppData\\Roaming\\Aref\\codex-oauth\\chatgpt-local\""));
+        assert!(command.contains("npx.cmd --yes @openai/codex@latest login --device-auth"));
+        assert!(!command.contains("start \"Aref Codex Login\""));
+        assert!(!command.contains("^&^&"));
     }
 
     #[test]
