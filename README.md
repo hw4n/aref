@@ -1,7 +1,11 @@
 <div align="center">
   <img src="src-tauri/icons/icon.png" width="96" alt="Aref icon" />
   <h1>Aref</h1>
-  <p><strong>Desktop-first infinite reference canvas for visual boards and reference-driven image generation.</strong></p>
+  <p><strong>Free desktop reference board. Optional AI generation when you want it.</strong></p>
+  <p>
+    <a href="./README.ko.md">한국어</a> ·
+    <a href="./README.ja.md">日本語</a>
+  </p>
   <p>
     <a href="https://github.com/hw4n/aref/actions/workflows/release.yml"><img alt="Release workflow" src="https://github.com/hw4n/aref/actions/workflows/release.yml/badge.svg" /></a>
     <a href="https://github.com/hw4n/aref/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/hw4n/aref?include_prereleases&label=release" /></a>
@@ -12,145 +16,75 @@
 
 ## What It Is
 
-Aref is a desktop workspace for collecting image references, arranging them on an infinite canvas, and sending selected references into image generation providers. It is built with Tauri, React, TypeScript, Zustand, and Konva.
+Aref is a local-first infinite canvas for collecting, arranging, and comparing image references.
 
-## Highlights
+Without AI, it is simply a free desktop referencing app: import images, lay them out, save a `.aref` board, and keep working offline. With Codex or image providers connected, it becomes easy to extend, patch, and automate for your own generation workflow.
 
-- Infinite canvas with typed camera state, pan/zoom, fit, frame, and center controls.
-- Image import from file dialog, drag-and-drop, and clipboard paste.
-- Selection, marquee, move, resize, rotate, duplicate, delete, lock, hide, group, and z-order actions.
-- Single-file `.aref` project save/open/save-as with autosave, startup restore, and recent projects.
-- Context-aware generation sheet that can use live or pinned reference selections.
-- Mock provider, OpenAI provider, and experimental ChatGPT OAuth bridge.
-- Provider request logs, developer log drawer, and tested persistence boundaries.
+## Preview
 
-## Quick Start
+<video src="docs/media/aref-generation-demo.mp4" controls muted playsinline width="100%"></video>
 
-### Prerequisites
+Generate images from prompts and references, then move the results directly on the canvas.
 
-- Node.js 22+
-- npm 10+
-- Rust toolchain
-- Linux desktop dependencies for local Tauri builds:
+<img src="docs/media/aref-board-example.jpg" alt="Aref board with many laid-out image references" />
 
-```bash
-sudo apt update
-sudo apt install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
-```
+Use Aref as a dense visual board for ideas, studies, outputs, and source material.
 
-### Install
+## Features
+
+- Infinite canvas with pan, zoom, fit, frame, and center controls.
+- Import images by file picker, drag-and-drop, or clipboard paste.
+- Move, resize, rotate, duplicate, group, hide, lock, and reorder items.
+- Save and reopen single-file `.aref` projects with embedded assets.
+- Optional generation through Mock, OpenAI API, or ChatGPT OAuth bridge.
+- Job history with rerun, prompt reuse, removal, logs, and generated results on canvas.
+
+## Run
+
+Prerequisites: Node.js 22+, npm 10+, and the Rust toolchain.
 
 ```bash
 npm install
-```
-
-### Run The App
-
-```bash
 npm run dev
 ```
 
-For renderer-only development:
+Renderer-only development:
 
 ```bash
 npm run dev:web
 ```
 
-## Quality Gates
+## AI Providers
 
-Run the same checks expected before cutting a release:
+AI is optional. The app works as a normal reference board without any provider setup.
 
-```bash
-npm run release:check
-```
+- Mock: no setup.
+- OpenAI API: configure from Settings, or use `OPENAI_API_KEY`.
+- ChatGPT OAuth bridge: use the app's OAuth login button. Aref keeps its own Codex OAuth home under the app config directory instead of depending on your global `~/.codex`.
 
-That runs TypeScript type checking, the Vitest suite, and a production Vite build.
-
-## Release
-
-GitHub releases are created by `.github/workflows/release.yml` whenever a semantic version tag is pushed.
-
-1. Update the version in `package.json`, `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.toml`.
-2. Run `npm run release:check`.
-3. Commit the release changes.
-4. Push a tag:
-
-```bash
-git tag v0.1.15
-git push origin main
-git push origin v0.1.15
-```
-
-The workflow builds Linux, Windows, and macOS installers and uploads them to the matching GitHub Release.
-
-### Local Desktop Build
-
-```bash
-npm run build:desktop
-```
-
-Tauri bundles are written under:
-
-```text
-src-tauri/target/release/bundle/
-```
-
-WSL/Linux builds Linux artifacts only. Build on Windows or macOS hosts for native Windows or macOS packages.
-
-## Provider Setup
-
-### Mock
-
-No setup required.
-
-### OpenAI
-
-Use the inspector settings panel, or launch with environment variables:
-
-```bash
-export OPENAI_API_KEY=sk-...
-export OPENAI_ORGANIZATION=org_...   # optional
-export OPENAI_PROJECT=proj_...       # optional
-export OPENAI_BASE_URL=https://api.openai.com/v1
-npm run dev
-```
-
-### ChatGPT OAuth Bridge
-
-The experimental provider uses an Aref-owned Codex OAuth home under the app config directory. Desktop builds can start login and the local `openai-oauth` proxy from the inspector without relying on your global `~/.codex` login.
-
-Windows builds require Node.js 20+ with npm/npx available. Aref checks the local proxy by calling `/v1/models`; auth file presence alone is not treated as ready.
-
-Aref does not start the OAuth proxy until its app-owned `codex-oauth/codex/auth.json` exists. If the app asks you to log in, use the Aref login button so the credentials are written to the Aref-owned Codex home.
-
-Manual fallback commands:
+Manual OAuth fallback:
 
 ```powershell
 npx --yes @openai/codex@latest login
 npx --yes openai-oauth@1.0.2 --port 10531 --codex-version 0.124.0
 ```
 
-Manual verification:
+## Project Format
 
-1. Windows: `%USERPROFILE%\.codex\auth.json` does not need to exist.
-2. Start Aref and choose ChatGPT OAuth.
-3. Click Log in. A browser login starts in the background. If that launch fails, Aref opens a device-auth terminal fallback.
-4. Complete the browser/device login.
-5. Confirm the app config directory contains `codex-oauth/codex/auth.json`.
-6. Start the proxy or wait for Aref to start it.
-7. Confirm `http://127.0.0.1:10531/v1/models` or the app provider state is ready.
-8. Run an AI image generation request.
+`.aref` is a single-file archive containing `project.json` and embedded `assets/*`. Current saves use `schemaVersion: 2`.
 
-On macOS and Linux, verify both a fresh Aref-owned OAuth login and existing legacy Codex auth paths still report a clear login/proxy state. Auth file contents contain tokens and must not be copied into logs or issues.
+## Development
 
-## `.aref` Project Format
+```bash
+npm run typecheck
+npm run test
+npm run build:desktop
+```
 
-- `.aref` is a single-file archive.
-- The archive contains `project.json` plus embedded `assets/*`.
-- Current saves use `schemaVersion: 2`.
-- Old schema-1 JSON plus sidecar projects still load for migration.
+Release tags are built by `.github/workflows/release.yml`:
 
-## Test Notes
-
-- `src/test/e2e-smoke.test.ts` covers the renderer-side MVP flow: import, arrange, reopen-style roundtrip, select refs, and mock generate.
-- `src-tauri/src/project_persistence.rs` includes archive roundtrip and schema-1 migration tests for the desktop persistence boundary.
+```bash
+git tag v0.3.1
+git push origin main
+git push origin v0.3.1
+```

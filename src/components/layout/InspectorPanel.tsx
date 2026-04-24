@@ -40,14 +40,11 @@ function GenerationJobCard({
   onCancelGeneration: (jobId: string) => void;
   onRerunGeneration: (jobId: string) => void | Promise<string | null>;
 }) {
-  const { job, existingReferenceIds, missingReferenceCount } = useAppStore((state) => {
+  const { job, missingReferenceCount } = useAppStore((state) => {
     const currentJob = state.project.jobs[jobId];
 
     return {
       job: currentJob,
-      existingReferenceIds: currentJob
-        ? currentJob.request.selectedAssetIds.filter((assetId) => Boolean(state.project.assets[assetId]))
-        : [],
       missingReferenceCount: currentJob
         ? currentJob.request.selectedAssetIds.filter((assetId) => !state.project.assets[assetId]).length
         : 0,
@@ -69,19 +66,14 @@ function GenerationJobCard({
     setGenerationDraft({
       prompt: job.request.prompt,
       negativePrompt: job.request.negativePrompt ?? "",
-      provider: job.request.provider,
-      model: job.request.model,
-      settings: { ...job.request.settings },
-      pinnedAssetIds: existingReferenceIds,
+      pinnedAssetIds: [],
       isExplicitlyOpened: true,
     });
 
     pushToast({
-      kind: missingReferenceCount > 0 ? "info" : "success",
-      title: "Job settings reused",
-      description: missingReferenceCount > 0
-        ? `${missingReferenceCount} missing reference${missingReferenceCount === 1 ? "" : "s"} were skipped.`
-        : "Prompt, refs, and settings were loaded into Generate.",
+      kind: "success",
+      title: "Prompt reused",
+      description: "Only the prompt text was loaded. References were not copied.",
     });
   };
 
@@ -139,7 +131,7 @@ function GenerationJobCard({
             <span>Rerun</span>
           </button>
         )}
-        <button className="generation-job-card__action" onClick={reuseJobRequest} title="Reuse prompt and settings">
+        <button className="generation-job-card__action" onClick={reuseJobRequest} title="Reuse prompt only">
           <ReuseJobIcon size={14} />
           <span>Reuse</span>
         </button>
