@@ -22,6 +22,7 @@ import {
   orderProviderAuthMethods,
 } from "@/domain/providers/provider-management";
 import type {
+  Ima2SidecarLoginLaunchSnapshot,
   Ima2SidecarSettingsSnapshot,
   OpenAiSettingsSnapshot,
   ProviderAuthMethod,
@@ -56,7 +57,7 @@ interface LeftSidebarProps {
   clearIma2SidecarSettings: () => Promise<Ima2SidecarSettingsSnapshot | null>;
   reloadIma2SidecarSettings: () => Promise<void>;
   startIma2SidecarProxy: () => Promise<Ima2SidecarSettingsSnapshot | null>;
-  startIma2SidecarLogin: () => Promise<boolean>;
+  startIma2SidecarLogin: () => Promise<Ima2SidecarLoginLaunchSnapshot | null>;
   selectProviderFamily: (familyId: "openai" | "mock") => void;
   setOpenAiAuthMethod: (authMethod: ProviderAuthMethod) => void;
 }
@@ -139,7 +140,7 @@ export function LeftSidebar({
   const [openAiProjectId, setOpenAiProjectId] = useState("");
   const [openAiBaseUrl, setOpenAiBaseUrl] = useState(openAiSettings.baseUrl);
   const [ima2SidecarBaseUrl, setIma2SidecarBaseUrl] = useState(ima2SidecarSettings.baseUrl);
-  const [oauthFlowState, setOauthFlowState] = useState<"idle" | "starting" | "waiting" | "ready" | "error">("idle");
+  const [oauthFlowState, setOauthFlowState] = useState<"idle" | "starting" | "loginPending" | "ready" | "error">("idle");
   const oauthProxyStartRequestedRef = useRef(false);
 
   useEffect(() => {
@@ -202,7 +203,7 @@ export function LeftSidebar({
   const oauthBusy = ima2SidecarSettingsStatus === "loading"
     || ima2SidecarSettingsStatus === "saving"
     || oauthFlowState === "starting"
-    || oauthFlowState === "waiting";
+    || oauthFlowState === "loginPending";
   const oauthModels = ima2SidecarSettings.models;
   const oauthModelSummary = oauthModels.length > 0
     ? `${oauthModels.slice(0, 3).join(", ")}${oauthModels.length > 3 ? ` +${oauthModels.length - 3}` : ""}`
@@ -227,8 +228,8 @@ export function LeftSidebar({
   } else if (oauthNodeMissing) {
     oauthPrimaryActionLabel = "Install Node.js";
     oauthStatusMessage = "Node.js required.";
-  } else if (oauthFlowState === "waiting") {
-    oauthPrimaryActionLabel = "Checking";
+  } else if (oauthFlowState === "loginPending") {
+    oauthPrimaryActionLabel = "Login pending";
     oauthStatusMessage = "Complete browser login.";
   } else if (oauthFlowState === "starting") {
     oauthPrimaryActionLabel = "Checking";
@@ -250,7 +251,7 @@ export function LeftSidebar({
       return;
     }
 
-    if (oauthFlowState !== "waiting" && oauthFlowState !== "starting") {
+    if (oauthFlowState !== "loginPending") {
       return;
     }
 
@@ -265,8 +266,7 @@ export function LeftSidebar({
     }
 
     if (
-      oauthFlowState === "waiting"
-      && !oauthNeedsLogin
+      ima2SidecarSettings.codexAuthStatus === "authed"
       && oauthCanStartProxy
       && ima2SidecarSettingsStatus === "idle"
       && !oauthProxyStartRequestedRef.current
@@ -289,12 +289,6 @@ export function LeftSidebar({
           return;
         }
 
-        if (nextSnapshot.oauthStatus === "auth_required") {
-          oauthProxyStartRequestedRef.current = false;
-          setOauthFlowState("waiting");
-          return;
-        }
-
         setOauthFlowState(nextSnapshot.oauthStatus === "starting" ? "starting" : "idle");
       });
       return;
@@ -307,10 +301,8 @@ export function LeftSidebar({
       setOauthFlowState("idle");
       pushToast({
         kind: "info",
-        title: oauthFlowState === "waiting" ? "Login not detected" : "OAuth not ready",
-        description: oauthFlowState === "waiting"
-          ? "Finish login in the browser, then try again."
-          : "Check proxy status, then try again.",
+        title: "Login not detected",
+        description: "Finish login in the browser, then try again.",
       });
     }, 60_000);
 
@@ -320,14 +312,59 @@ export function LeftSidebar({
     };
   }, [
     ima2SidecarSettingsStatus,
+    ima2SidecarSettings.codexAuthStatus,
     oauthFlowState,
     oauthCanStartProxy,
-    oauthNeedsLogin,
     oauthReady,
     openAiAuthMethod,
     pushToast,
     reloadIma2SidecarSettings,
     startIma2SidecarProxy,
+  ]);
+
+  useEffect(() => {
+    if (openAiAuthMethod !== "oauth" || oauthFlowState !== "starting") {
+      return;
+    }
+
+    if (oauthReady) {
+      oauthProxyStartRequestedRef.current = false;
+      setOauthFlowState("ready");
+      pushToast({
+        kind: "success",
+        title: "OAuth ready",
+      });
+      return;
+    }
+
+    if (!oauthCanStartProxy) {
+      setOauthFlowState("idle");
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      void reloadIma2SidecarSettings();
+    }, 2500);
+    const timeoutId = window.setTimeout(() => {
+      setOauthFlowState("idle");
+      pushToast({
+        kind: "info",
+        title: "OAuth not ready",
+        description: "Check proxy status, then try again.",
+      });
+    }, 60_000);
+
+    return () => {
+      window.clearInterval(intervalId);
+      window.clearTimeout(timeoutId);
+    };
+  }, [
+    oauthCanStartProxy,
+    oauthFlowState,
+    oauthReady,
+    openAiAuthMethod,
+    pushToast,
+    reloadIma2SidecarSettings,
   ]);
 
   const handleOpenSettings = (section: SettingsSurfaceSection) => {
@@ -443,6 +480,12 @@ export function LeftSidebar({
       return;
     }
 
+    if (!oauthCanStartProxy) {
+      setOauthFlowState("idle");
+      void reloadIma2SidecarSettings();
+      return;
+    }
+
     const nextSnapshot = await startIma2SidecarProxy();
 
     if (!nextSnapshot) {
@@ -464,23 +507,26 @@ export function LeftSidebar({
   };
 
   const handleStartIma2Login = async () => {
-    const started = await startIma2SidecarLogin();
+    setOauthFlowState("starting");
+    const launchSnapshot = await startIma2SidecarLogin();
 
-    if (!started) {
+    if (!launchSnapshot) {
+      setOauthFlowState("error");
       return;
     }
 
+    setOauthFlowState("loginPending");
     appendDiagnosticLog({
       level: "info",
       scope: "auth",
       title: "OAuth login started",
       message: "ChatGPT login flow was launched from the provider settings.",
-      details: "Finish login in the browser.",
+      details: `Status: ${launchSnapshot.status}. Log: ${launchSnapshot.logPath}.`,
     });
     pushToast({
       kind: "info",
-      title: "Login started",
-      description: "Finish login in the browser.",
+      title: launchSnapshot.fallbackVisible ? "Device login opened" : "Login started",
+      description: launchSnapshot.fallbackVisible ? "Finish login in the terminal." : "Finish login in the browser.",
     });
   };
 
@@ -498,9 +544,9 @@ export function LeftSidebar({
     setOauthFlowState("starting");
 
     if (oauthNeedsLogin) {
-      const started = await startIma2SidecarLogin();
+      const launchSnapshot = await startIma2SidecarLogin();
 
-      if (!started) {
+      if (!launchSnapshot) {
         setOauthFlowState("error");
         pushToast({
           kind: "error",
@@ -509,11 +555,11 @@ export function LeftSidebar({
         return;
       }
 
-      setOauthFlowState("waiting");
+      setOauthFlowState("loginPending");
       pushToast({
         kind: "info",
-        title: "Login opened",
-        description: "Finish login in the browser.",
+        title: launchSnapshot.fallbackVisible ? "Device login opened" : "Login opened",
+        description: launchSnapshot.fallbackVisible ? "Finish login in the terminal." : "Finish login in the browser.",
       });
       window.setTimeout(() => {
         void reloadIma2SidecarSettings();
@@ -528,7 +574,7 @@ export function LeftSidebar({
       return;
     }
 
-    setOauthFlowState(nextSnapshot.oauthStatus === "ready" ? "ready" : "idle");
+    setOauthFlowState(nextSnapshot.oauthStatus === "ready" ? "ready" : nextSnapshot.oauthStatus === "starting" ? "starting" : "idle");
   };
 
   const handleDeveloperModeToggle = (enabled: boolean) => {

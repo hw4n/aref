@@ -127,6 +127,50 @@ export function resolveOpenAiConcreteProvider(authMethod: ProviderAuthMethod) {
   return authMethod === "oauth" ? "ima2-sidecar" : "openai";
 }
 
+export function shouldAutoStartOAuthProxy(options: {
+  snapshot: Ima2SidecarSettingsSnapshot;
+  isDesktop: boolean;
+  status: "idle" | "loading" | "saving" | "error";
+}) {
+  const { snapshot, isDesktop, status } = options;
+
+  if (!isDesktop || status !== "idle" || snapshot.oauthStatus === "ready") {
+    return false;
+  }
+
+  if (
+    snapshot.codexAuthStatus !== "authed"
+    || snapshot.oauthStatus === "auth_required"
+    || snapshot.oauthStatus === "node_missing"
+  ) {
+    return false;
+  }
+
+  return snapshot.oauthStatus === "offline" || snapshot.oauthStatus === "unknown";
+}
+
+export function shouldPollOAuthSettings(options: {
+  snapshot: Ima2SidecarSettingsSnapshot;
+  isDesktop: boolean;
+  status: "idle" | "loading" | "saving" | "error";
+}) {
+  const { snapshot, isDesktop, status } = options;
+
+  if (!isDesktop || status !== "idle" || snapshot.oauthStatus === "ready") {
+    return false;
+  }
+
+  if (
+    snapshot.codexAuthStatus !== "authed"
+    || snapshot.oauthStatus === "auth_required"
+    || snapshot.oauthStatus === "node_missing"
+  ) {
+    return false;
+  }
+
+  return snapshot.oauthStatus === "starting" || snapshot.proxyManaged;
+}
+
 export function getResolvedOpenAiAuthMethod(
   desiredMethod: ProviderAuthMethod,
   availabilityByMethod: Record<ProviderAuthMethod, ProviderAvailabilityDescriptor>,

@@ -76,9 +76,9 @@ GitHub releases are created by `.github/workflows/release.yml` whenever a semant
 4. Push a tag:
 
 ```bash
-git tag v0.1.13
+git tag v0.1.14
 git push origin main
-git push origin v0.1.13
+git push origin v0.1.14
 ```
 
 The workflow builds Linux, Windows, and macOS installers and uploads them to the matching GitHub Release.
@@ -134,7 +134,7 @@ Manual verification:
 
 1. Windows: `%USERPROFILE%\.codex\auth.json` does not need to exist.
 2. Start Aref and choose ChatGPT OAuth.
-3. Click Log in. A visible terminal opens for Codex login.
+3. Click Log in. A browser login starts in the background. If that launch fails, Aref opens a device-auth terminal fallback.
 4. Complete the browser/device login.
 5. Confirm the app config directory contains `codex-oauth/codex/auth.json`.
 6. Start the proxy or wait for Aref to start it.

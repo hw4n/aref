@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 import type { GenerationJobStatus } from "@/domain/jobs/types";
 import type {
+  Ima2SidecarLoginLaunchSnapshot,
   Ima2SidecarSettingsSnapshot,
   ProviderGeneratedImage,
   SaveIma2SidecarSettingsInput,
@@ -83,7 +84,7 @@ export async function startIma2SidecarProxy() {
 
 export async function launchIma2SidecarLogin() {
   ensureTauriRuntime();
-  return invoke<void>("launch_ima2_sidecar_login");
+  return invoke<Ima2SidecarLoginLaunchSnapshot>("launch_ima2_sidecar_login");
 }
 
 export async function startIma2SidecarGeneration(request: StartIma2SidecarGenerationInput) {

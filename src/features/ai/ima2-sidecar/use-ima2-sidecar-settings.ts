@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type {
+  Ima2SidecarLoginLaunchSnapshot,
   Ima2SidecarSettingsSnapshot,
   SaveIma2SidecarSettingsInput,
 } from "@/domain/providers/types";
@@ -110,19 +111,19 @@ export function useIma2SidecarSettings() {
 
   const startLogin = useCallback(async () => {
     if (!isDesktop) {
-      return false;
+      return null;
     }
 
     try {
       setStatus("saving");
-      await launchIma2SidecarLogin();
+      const launchSnapshot: Ima2SidecarLoginLaunchSnapshot = await launchIma2SidecarLogin();
       setError(null);
       setStatus("idle");
-      return true;
+      return launchSnapshot;
     } catch (nextError) {
       setStatus("error");
       setError(nextError instanceof Error ? nextError.message : "Failed to start Codex login.");
-      return false;
+      return null;
     }
   }, [isDesktop]);
 

@@ -7,6 +7,8 @@ import {
   mapOpenAiOAuthAvailability,
   orderProviderAuthMethods,
   resolveOpenAiConcreteProvider,
+  shouldAutoStartOAuthProxy,
+  shouldPollOAuthSettings,
 } from "@/domain/providers/provider-management";
 import type {
   GenerationProviderAdapter,
@@ -161,24 +163,11 @@ export function useProviderManagement() {
       return;
     }
 
-    if (ima2SidecarSettingsStatus !== "idle" || ima2SidecarSettings.oauthStatus === "ready") {
-      return;
-    }
-
-    if (
-      ima2SidecarSettings.oauthStatus === "node_missing"
-      || ima2SidecarSettings.oauthStatus === "auth_required"
-      || ima2SidecarSettings.codexAuthStatus !== "authed"
-    ) {
-      oauthAutoStartSignatureRef.current = null;
-      return;
-    }
-
-    if (
-      ima2SidecarSettings.oauthStatus !== "offline"
-      && ima2SidecarSettings.oauthStatus !== "starting"
-      && ima2SidecarSettings.oauthStatus !== "unknown"
-    ) {
+    if (!shouldAutoStartOAuthProxy({
+      snapshot: ima2SidecarSettings,
+      isDesktop: isDesktopIma2SidecarAvailable,
+      status: ima2SidecarSettingsStatus,
+    })) {
       return;
     }
 
@@ -204,11 +193,11 @@ export function useProviderManagement() {
   ]);
 
   useEffect(() => {
-    if (
-      !isDesktopIma2SidecarAvailable
-      || ima2SidecarSettingsStatus !== "idle"
-      || ima2SidecarSettings.oauthStatus === "ready"
-    ) {
+    if (!shouldPollOAuthSettings({
+      snapshot: ima2SidecarSettings,
+      isDesktop: isDesktopIma2SidecarAvailable,
+      status: ima2SidecarSettingsStatus,
+    })) {
       return;
     }
 
@@ -218,7 +207,9 @@ export function useProviderManagement() {
 
     return () => window.clearInterval(intervalId);
   }, [
+    ima2SidecarSettings.codexAuthStatus,
     ima2SidecarSettings.oauthStatus,
+    ima2SidecarSettings.proxyManaged,
     ima2SidecarSettingsStatus,
     isDesktopIma2SidecarAvailable,
     reloadIma2SidecarSettings,

@@ -6,7 +6,20 @@ import {
   mapOpenAiApiKeyAvailability,
   mapOpenAiOAuthAvailability,
   orderProviderAuthMethods,
+  shouldAutoStartOAuthProxy,
+  shouldPollOAuthSettings,
 } from "./provider-management";
+
+const baseOAuthSnapshot = {
+  configured: true,
+  available: false,
+  source: "stored" as const,
+  baseUrl: "http://127.0.0.1:10531",
+  oauthStatus: "offline" as const,
+  codexAuthStatus: "authed" as const,
+  models: [],
+  proxyManaged: false,
+};
 
 describe("provider management", () => {
   it("orders auth methods with OAuth before API key", () => {
@@ -144,6 +157,135 @@ describe("provider management", () => {
   it("maps mock provider gating to disabled or available", () => {
     expect(mapMockProviderAvailability(false).state).toBe("disabled");
     expect(mapMockProviderAvailability(true).state).toBe("available");
+  });
+
+  it("does not auto-start OAuth proxy before auth is available", () => {
+    expect(
+      shouldAutoStartOAuthProxy({
+        snapshot: {
+          ...baseOAuthSnapshot,
+          oauthStatus: "auth_required",
+          codexAuthStatus: "unauthed",
+        },
+        isDesktop: true,
+        status: "idle",
+      }),
+    ).toBe(false);
+
+    expect(
+      shouldAutoStartOAuthProxy({
+        snapshot: {
+          ...baseOAuthSnapshot,
+          codexAuthStatus: "missing",
+        },
+        isDesktop: true,
+        status: "idle",
+      }),
+    ).toBe(false);
+
+    expect(
+      shouldAutoStartOAuthProxy({
+        snapshot: {
+          ...baseOAuthSnapshot,
+          codexAuthStatus: "auth_file_missing",
+        },
+        isDesktop: true,
+        status: "idle",
+      }),
+    ).toBe(false);
+
+    expect(
+      shouldAutoStartOAuthProxy({
+        snapshot: {
+          ...baseOAuthSnapshot,
+          oauthStatus: "node_missing",
+        },
+        isDesktop: true,
+        status: "idle",
+      }),
+    ).toBe(false);
+  });
+
+  it("auto-starts OAuth proxy only for authenticated offline or unknown proxy states", () => {
+    expect(
+      shouldAutoStartOAuthProxy({
+        snapshot: baseOAuthSnapshot,
+        isDesktop: true,
+        status: "idle",
+      }),
+    ).toBe(true);
+
+    expect(
+      shouldAutoStartOAuthProxy({
+        snapshot: {
+          ...baseOAuthSnapshot,
+          oauthStatus: "unknown",
+        },
+        isDesktop: true,
+        status: "idle",
+      }),
+    ).toBe(true);
+
+    expect(
+      shouldAutoStartOAuthProxy({
+        snapshot: {
+          ...baseOAuthSnapshot,
+          oauthStatus: "starting",
+          proxyManaged: true,
+        },
+        isDesktop: true,
+        status: "idle",
+      }),
+    ).toBe(false);
+  });
+
+  it("polls OAuth settings only while proxy startup can progress", () => {
+    expect(
+      shouldPollOAuthSettings({
+        snapshot: {
+          ...baseOAuthSnapshot,
+          oauthStatus: "starting",
+        },
+        isDesktop: true,
+        status: "idle",
+      }),
+    ).toBe(true);
+
+    expect(
+      shouldPollOAuthSettings({
+        snapshot: {
+          ...baseOAuthSnapshot,
+          proxyManaged: true,
+        },
+        isDesktop: true,
+        status: "idle",
+      }),
+    ).toBe(true);
+
+    expect(
+      shouldPollOAuthSettings({
+        snapshot: {
+          ...baseOAuthSnapshot,
+          oauthStatus: "auth_required",
+          codexAuthStatus: "unauthed",
+          proxyManaged: true,
+        },
+        isDesktop: true,
+        status: "idle",
+      }),
+    ).toBe(false);
+
+    expect(
+      shouldPollOAuthSettings({
+        snapshot: {
+          ...baseOAuthSnapshot,
+          codexAuthStatus: "auth_file_missing",
+          proxyManaged: true,
+        },
+        isDesktop: true,
+        status: "idle",
+      }),
+    ).toBe(false);
   });
 
   it("keeps OAuth selected while the local OAuth bridge is being prepared", () => {

@@ -108,6 +108,12 @@ export interface Ima2SidecarSettingsSnapshot {
   proxyManaged: boolean;
 }
 
+export interface Ima2SidecarLoginLaunchSnapshot {
+  status: "pending" | "fallback_pending";
+  logPath: string;
+  fallbackVisible: boolean;
+}
+
 export interface SaveIma2SidecarSettingsInput {
   baseUrl?: string;
 }

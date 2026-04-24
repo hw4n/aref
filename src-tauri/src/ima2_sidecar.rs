@@ -26,6 +26,7 @@ const DEFAULT_IMA2_SIDECAR_BASE_URL: &str = "http://127.0.0.1:10531";
 const IMA2_SIDECAR_SETTINGS_FILENAME: &str = "ima2-sidecar-settings.json";
 const IMA2_SIDECAR_REQUEST_LOG_FILENAME: &str = "ima2-sidecar-requests.jsonl";
 const IMA2_SIDECAR_PROXY_LOG_FILENAME: &str = "ima2-sidecar-proxy.log";
+const IMA2_SIDECAR_LOGIN_LOG_FILENAME: &str = "ima2-sidecar-login.log";
 const IMA2_SIDECAR_GENERATED_DIRECTORY: &str = "ima2-sidecar-generated";
 const IMA2_SIDECAR_REQUEST_TIMEOUT_SECONDS: u64 = 240;
 const IMA2_SIDECAR_HEALTH_TIMEOUT_SECONDS: u64 = 3;
@@ -93,6 +94,14 @@ pub struct Ima2SidecarSettingsSnapshot {
     codex_auth_status: String,
     models: Vec<String>,
     proxy_managed: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Ima2SidecarLoginLaunchSnapshot {
+    status: String,
+    log_path: String,
+    fallback_visible: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -242,6 +251,10 @@ fn ima2_sidecar_log_path(app: &AppHandle) -> Result<PathBuf, String> {
 
 fn ima2_sidecar_proxy_log_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(app_local_data_dir(app)?.join(IMA2_SIDECAR_PROXY_LOG_FILENAME))
+}
+
+fn ima2_sidecar_login_log_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app_local_data_dir(app)?.join(IMA2_SIDECAR_LOGIN_LOG_FILENAME))
 }
 
 fn ima2_sidecar_generated_directory(app: &AppHandle) -> Result<PathBuf, String> {
@@ -1210,23 +1223,77 @@ async fn fetch_ima2_sidecar_snapshot(
     })
 }
 
-fn try_spawn_process(
-    binary: &str,
-    args: &[&str],
+fn should_spawn_managed_proxy(auth_env: &ArefCodexAuthEnv) -> bool {
+    auth_env.auth_file.exists()
+}
+
+fn login_launch_snapshot(
+    status: &str,
+    log_path: &Path,
+    fallback_visible: bool,
+) -> Ima2SidecarLoginLaunchSnapshot {
+    Ima2SidecarLoginLaunchSnapshot {
+        status: status.to_string(),
+        log_path: log_path.to_string_lossy().to_string(),
+        fallback_visible,
+    }
+}
+
+fn open_login_process_log(
+    log_path: &Path,
     auth_env: &ArefCodexAuthEnv,
+    command_label: &str,
+) -> Result<fs::File, String> {
+    ensure_parent_directory(log_path)?;
+    let mut login_log = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path)
+        .map_err(|error| error.to_string())?;
+    writeln!(
+        login_log,
+        "\n{} starting Codex login via {} with auth file {} (exists: {}) and CODEX_HOME {}",
+        now_iso_string(),
+        command_label,
+        auth_env.auth_file.display(),
+        auth_env.auth_file.exists(),
+        auth_env.codex_home.display()
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(login_log)
+}
+
+fn spawn_hidden_codex_browser_login(
+    auth_env: &ArefCodexAuthEnv,
+    npx_path: &str,
+    log_path: &Path,
 ) -> Result<(), String> {
-    let mut command = hidden_command_with_args(binary, args);
+    let login_args = ["--yes", "@openai/codex@latest", "login"];
+    let login_log = open_login_process_log(log_path, auth_env, npx_path)?;
+    let login_stdout = login_log.try_clone().map_err(|error| error.to_string())?;
+    let login_stderr = login_log.try_clone().map_err(|error| error.to_string())?;
+    let mut command = hidden_command_with_args(npx_path, &login_args);
     apply_aref_codex_auth_env(&mut command, auth_env);
     let mut child = command
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stdout(Stdio::from(login_stdout))
+        .stderr(Stdio::from(login_stderr))
         .spawn()
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| {
+            format!(
+                "Failed to launch hidden Codex browser login via {}. Log: {}. Error: {}",
+                npx_path,
+                log_path.display(),
+                error
+            )
+        })?;
 
     thread::sleep(Duration::from_millis(800));
     match child.try_wait() {
-        Ok(Some(status)) if !status.success() => Err(format!("{binary} exited with {status}")),
+        Ok(Some(status)) if !status.success() => Err(format!(
+            "Hidden Codex browser login exited with {status}. Log: {}",
+            log_path.display()
+        )),
         Ok(_) => Ok(()),
         Err(error) => Err(error.to_string()),
     }
@@ -1241,20 +1308,17 @@ fn quote_powershell_single_quoted(value: &str) -> String {
 fn build_windows_visible_login_powershell_script(
     auth_env: &ArefCodexAuthEnv,
     npx_binary: &str,
-    device_auth: bool,
 ) -> String {
-    let device_auth_arg = if device_auth { " --device-auth" } else { "" };
     let command = format!(
         "$Host.UI.RawUI.WindowTitle = 'Aref Codex Login'; \
          $env:CODEX_HOME = {}; \
          $env:CHATGPT_LOCAL_HOME = {}; \
-         & {} --yes @openai/codex@latest login{}; \
+         & {} --yes @openai/codex@latest login --device-auth; \
          Write-Host ''; \
          Write-Host 'Login finished. Return to Aref.'",
         quote_powershell_single_quoted(&auth_env.codex_home.to_string_lossy()),
         quote_powershell_single_quoted(&auth_env.chatgpt_local_home.to_string_lossy()),
-        quote_powershell_single_quoted(npx_binary),
-        device_auth_arg
+        quote_powershell_single_quoted(npx_binary)
     );
     format!(
         "Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile','-NoExit','-ExecutionPolicy','Bypass','-Command',{}) -WindowStyle Normal",
@@ -1263,13 +1327,9 @@ fn build_windows_visible_login_powershell_script(
 }
 
 #[cfg(target_os = "windows")]
-fn launch_windows_visible_codex_login(
-    auth_env: &ArefCodexAuthEnv,
-    device_auth: bool,
-) -> Result<(), String> {
+fn launch_windows_visible_codex_login(auth_env: &ArefCodexAuthEnv) -> Result<(), String> {
     let npx_path = resolve_npx_binary()?;
-    let powershell_script =
-        build_windows_visible_login_powershell_script(auth_env, &npx_path, device_auth);
+    let powershell_script = build_windows_visible_login_powershell_script(auth_env, &npx_path);
     let mut child = hidden_command("powershell.exe")
         .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command"])
         .arg(powershell_script)
@@ -1289,44 +1349,42 @@ fn launch_windows_visible_codex_login(
     }
 }
 
-#[cfg(target_os = "windows")]
-fn launch_windows_codex_login(auth_env: &ArefCodexAuthEnv) -> Result<(), String> {
-    match launch_windows_visible_codex_login(auth_env, false) {
-        Ok(()) => Ok(()),
-        Err(browser_error) => {
-            launch_windows_visible_codex_login(auth_env, true).map_err(|device_error| {
-                format!(
-                    "Browser login failed: {browser_error}. Device login failed: {device_error}"
-                )
-            })
-        }
-    }
-}
-
-fn launch_codex_login_process(app: &AppHandle) -> Result<(), String> {
+fn launch_codex_login_process(app: &AppHandle) -> Result<Ima2SidecarLoginLaunchSnapshot, String> {
     let auth_env = aref_codex_auth_env(app)?;
     ensure_codex_file_credentials_config(&auth_env)?;
+    let log_path = ima2_sidecar_login_log_path(app)?;
+    let npx_path = resolve_npx_binary()?;
 
-    #[cfg(target_os = "windows")]
-    {
-        return launch_windows_codex_login(&auth_env);
-    }
+    match spawn_hidden_codex_browser_login(&auth_env, &npx_path, &log_path) {
+        Ok(()) => return Ok(login_launch_snapshot("pending", &log_path, false)),
+        Err(browser_error) => {
+            #[cfg(target_os = "windows")]
+            {
+                let _ =
+                    open_login_process_log(&log_path, &auth_env, "visible device-auth fallback")
+                        .and_then(|mut log| {
+                            writeln!(
+                                log,
+                                "{} hidden browser login failed: {}",
+                                now_iso_string(),
+                                browser_error
+                            )
+                            .map_err(|error| error.to_string())
+                        });
+                return launch_windows_visible_codex_login(&auth_env)
+                    .map(|()| login_launch_snapshot("fallback_pending", &log_path, true))
+                    .map_err(|device_error| {
+                        format!(
+                            "Browser login failed: {browser_error}. Device login failed: {device_error}"
+                        )
+                    });
+            }
 
-    #[cfg(not(target_os = "windows"))]
-    {
-        let npx_login_args = ["--yes", "@openai/codex@latest", "login"];
-
-        for binary in codex_binary_candidates() {
-            match try_spawn_process(binary, &["login"], &auth_env) {
-                Ok(()) => return Ok(()),
-                Err(error) if error.contains("No such file or directory") => continue,
-                Err(error) if error.contains("cannot find the file") => continue,
-                Err(_) => continue,
+            #[cfg(not(target_os = "windows"))]
+            {
+                return Err(browser_error);
             }
         }
-
-        let npx_path = resolve_npx_binary()?;
-        try_spawn_process(&npx_path, &npx_login_args, &auth_env)
     }
 }
 
@@ -1338,11 +1396,9 @@ async fn start_managed_proxy(
     let settings = resolve_ima2_sidecar_settings(app)?;
     let auth_env = aref_codex_auth_env(app)?;
     ensure_codex_file_credentials_config(&auth_env)?;
-    if !auth_env.auth_file.exists() {
-        return Err(format!(
-            "Aref OAuth auth.json is missing at {}. Click Log in first, then start the bridge.",
-            auth_env.auth_file.display()
-        ));
+    if !should_spawn_managed_proxy(&auth_env) {
+        stop_managed_proxy(runtime).await?;
+        return fetch_ima2_sidecar_snapshot(app, runtime).await;
     }
 
     if managed_proxy_matches(runtime, &settings.base_url).await? {
@@ -1813,7 +1869,9 @@ pub async fn start_ima2_sidecar_proxy(
 }
 
 #[tauri::command]
-pub async fn launch_ima2_sidecar_login(app: AppHandle) -> Result<(), String> {
+pub async fn launch_ima2_sidecar_login(
+    app: AppHandle,
+) -> Result<Ima2SidecarLoginLaunchSnapshot, String> {
     launch_codex_login_process(&app)
 }
 
@@ -2151,6 +2209,53 @@ mod tests {
     }
 
     #[test]
+    fn does_not_spawn_proxy_without_aref_auth_file() {
+        let root = env::temp_dir().join(format!("aref-codex-auth-test-{}", Uuid::new_v4()));
+        let auth_env = ArefCodexAuthEnv {
+            codex_home: root.join("codex"),
+            chatgpt_local_home: root.join("chatgpt-local"),
+            auth_file: root.join("codex").join("auth.json"),
+        };
+        fs::create_dir_all(&auth_env.codex_home).expect("codex dir");
+
+        assert!(!should_spawn_managed_proxy(&auth_env));
+
+        fs::write(&auth_env.auth_file, "{}").expect("auth file");
+        assert!(should_spawn_managed_proxy(&auth_env));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn hidden_login_launch_reports_pending_and_writes_log() {
+        let root = env::temp_dir().join(format!("aref-codex-login-test-{}", Uuid::new_v4()));
+        let auth_env = ArefCodexAuthEnv {
+            codex_home: root.join("codex"),
+            chatgpt_local_home: root.join("chatgpt-local"),
+            auth_file: root.join("codex").join("auth.json"),
+        };
+        fs::create_dir_all(&auth_env.codex_home).expect("codex dir");
+        let log_path = root.join("ima2-sidecar-login.log");
+
+        let snapshot = login_launch_snapshot("pending", &log_path, false);
+        assert_eq!(snapshot.status, "pending");
+        assert_eq!(snapshot.log_path, log_path.to_string_lossy());
+        assert!(!snapshot.fallback_visible);
+
+        drop(
+            open_login_process_log(&log_path, &auth_env, "npx.cmd")
+                .expect("login log should be opened"),
+        );
+        let contents = fs::read_to_string(&log_path).expect("login log readable");
+        assert!(contents.contains("starting Codex login via npx.cmd"));
+        assert!(contents.contains("CODEX_HOME"));
+        assert!(contents.contains(&auth_env.auth_file.to_string_lossy().to_string()));
+        assert!(!contents.contains("access_token"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn quotes_windows_cmd_tokens_with_spaces() {
         assert_eq!(
             build_windows_cmd_line("npx.cmd", &["--yes", "C:\\Users\\Aref User\\auth.json"]),
@@ -2159,7 +2264,7 @@ mod tests {
     }
 
     #[test]
-    fn builds_visible_windows_browser_login_powershell_launcher() {
+    fn builds_visible_windows_device_auth_launcher() {
         let auth_env = ArefCodexAuthEnv {
             codex_home: PathBuf::from(
                 "C:\\Users\\Aref User\\AppData\\Roaming\\Aref\\codex-oauth\\codex",
@@ -2174,36 +2279,12 @@ mod tests {
         let script = build_windows_visible_login_powershell_script(
             &auth_env,
             "C:\\Program Files\\nodejs\\npx.cmd",
-            false,
         );
 
         assert!(script.starts_with("Start-Process -FilePath 'powershell.exe'"));
         assert!(script.contains("$env:CODEX_HOME = ''C:\\Users\\Aref User\\AppData\\Roaming\\Aref\\codex-oauth\\codex''"));
         assert!(script.contains("$env:CHATGPT_LOCAL_HOME = ''C:\\Users\\Aref User\\AppData\\Roaming\\Aref\\codex-oauth\\chatgpt-local''"));
-        assert!(script.contains(
-            "& ''C:\\Program Files\\nodejs\\npx.cmd'' --yes @openai/codex@latest login;"
-        ));
-        assert!(!script.contains("--device-auth"));
-        assert!(!script.contains("start \"Aref Codex Login\""));
-    }
-
-    #[test]
-    fn builds_powershell_device_auth_launcher() {
-        let auth_env = ArefCodexAuthEnv {
-            codex_home: PathBuf::from(
-                "C:\\Users\\Aref User\\AppData\\Roaming\\Aref\\codex-oauth\\codex",
-            ),
-            chatgpt_local_home: PathBuf::from(
-                "C:\\Users\\Aref User\\AppData\\Roaming\\Aref\\codex-oauth\\chatgpt-local",
-            ),
-            auth_file: PathBuf::from(
-                "C:\\Users\\Aref User\\AppData\\Roaming\\Aref\\codex-oauth\\codex\\auth.json",
-            ),
-        };
-        let script = build_windows_visible_login_powershell_script(&auth_env, "npx.cmd", true);
-
-        assert!(script.starts_with("Start-Process -FilePath 'powershell.exe'"));
-        assert!(script.contains("@openai/codex@latest login --device-auth"));
+        assert!(script.contains("& ''C:\\Program Files\\nodejs\\npx.cmd'' --yes @openai/codex@latest login --device-auth;"));
         assert!(!script.contains("start \"Aref Codex Login\""));
     }
 
