@@ -64,11 +64,19 @@ pub struct ImportedChatGptImageDraft {
     height: u32,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatGptShareImportResult {
+    drafts: Vec<ImportedChatGptImageDraft>,
+    skipped_count: usize,
+}
+
 #[derive(Debug, Deserialize)]
 struct ChatGptFileDownloadResponse {
     status: String,
     download_url: Option<String>,
     file_name: Option<String>,
+    error_message: Option<String>,
 }
 
 struct ChatGptImagePointer {
@@ -1276,10 +1284,11 @@ async fn import_single_chatgpt_image(
         .await
         .map_err(|error| error.to_string())?;
     if download_response.status != "success" {
-        return Err(format!(
-            "ChatGPT file is not ready to download: {}",
-            download_response.status
-        ));
+        let reason = download_response
+            .error_message
+            .as_deref()
+            .unwrap_or(download_response.status.as_str());
+        return Err(format!("ChatGPT file is not ready to download: {reason}"));
     }
 
     let download_url = download_response
@@ -1334,7 +1343,7 @@ async fn import_single_chatgpt_image(
 pub async fn import_chatgpt_share_images(
     app: AppHandle,
     url: String,
-) -> Result<Vec<ImportedChatGptImageDraft>, String> {
+) -> Result<ChatGptShareImportResult, String> {
     let parsed_url =
         Url::parse(url.trim()).map_err(|_| "Paste a valid ChatGPT share URL.".to_string())?;
     validate_chatgpt_share_url(&parsed_url)?;
@@ -1377,22 +1386,38 @@ pub async fn import_chatgpt_share_images(
     }
 
     let mut drafts = Vec::with_capacity(pointers.len());
+    let mut skipped_count = 0;
+    let mut first_error = None;
     for pointer in pointers {
-        drafts.push(
-            import_single_chatgpt_image(
-                &app,
-                &client,
-                &origin,
-                &referer,
-                &cookie_header,
-                share_id.as_deref(),
-                &pointer,
-            )
-            .await?,
-        );
+        match import_single_chatgpt_image(
+            &app,
+            &client,
+            &origin,
+            &referer,
+            &cookie_header,
+            share_id.as_deref(),
+            &pointer,
+        )
+        .await
+        {
+            Ok(draft) => drafts.push(draft),
+            Err(error) => {
+                skipped_count += 1;
+                first_error.get_or_insert(error);
+            }
+        }
     }
 
-    Ok(drafts)
+    if drafts.is_empty() {
+        return Err(first_error.unwrap_or_else(|| {
+            "No downloadable ChatGPT images were found in that shared conversation.".to_string()
+        }));
+    }
+
+    Ok(ChatGptShareImportResult {
+        drafts,
+        skipped_count,
+    })
 }
 
 #[tauri::command]

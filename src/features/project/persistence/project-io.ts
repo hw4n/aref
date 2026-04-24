@@ -187,12 +187,17 @@ export async function readManagedImageBytes(path: string) {
   return invoke<number[]>("read_image_bytes", { path });
 }
 
-export async function importChatGptShareImages(url: string): Promise<ImportedImageDraft[]> {
+export interface ChatGptShareImportResult {
+  drafts: ImportedImageDraft[];
+  skippedCount: number;
+}
+
+export async function importChatGptShareImages(url: string): Promise<ChatGptShareImportResult> {
   if (!hasTauriRuntime()) {
     throw new Error("ChatGPT share import is only available in the desktop app.");
   }
 
-  return invoke<ImportedImageDraft[]>("import_chatgpt_share_images", { url });
+  return invoke<ChatGptShareImportResult>("import_chatgpt_share_images", { url });
 }
 
 export async function loadProjectFromPath(path: string) {

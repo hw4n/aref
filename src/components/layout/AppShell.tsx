@@ -90,6 +90,7 @@ export function AppShell() {
   const toggleInspector = useAppStore((state) => state.toggleInspector);
   const setInspectorWidth = useAppStore((state) => state.setInspectorWidth);
   const setGenerationSheetWidth = useAppStore((state) => state.setGenerationSheetWidth);
+  const pushToast = useAppStore((state) => state.pushToast);
   useUiPreferencesPersistence();
   const {
     createNewProject,
@@ -174,17 +175,24 @@ export function AppShell() {
     setImportError(null);
 
     try {
-      const drafts = await importChatGptShareImages(shareUrl);
-      importAssets(drafts);
+      const result = await importChatGptShareImages(shareUrl);
+      importAssets(result.drafts);
       setChatGptImportDialogOpen(false);
       setChatGptShareUrl("");
+      pushToast({
+        kind: result.skippedCount > 0 ? "info" : "success",
+        title: "ChatGPT images imported",
+        description: result.skippedCount > 0
+          ? `${result.drafts.length} imported, ${result.skippedCount} unavailable in the shared link.`
+          : `${result.drafts.length} imported.`,
+      });
     } catch (error) {
       setImportError(error instanceof Error ? error.message : "Failed to import images from ChatGPT.");
     } finally {
       setIsImporting(false);
       setIsChatGptImporting(false);
     }
-  }, [chatGptShareUrl, importAssets]);
+  }, [chatGptShareUrl, importAssets, pushToast]);
 
   useEffect(() => {
     if (!chatGptImportDialogOpen) {
