@@ -76,9 +76,9 @@ GitHub releases are created by `.github/workflows/release.yml` whenever a semant
 4. Push a tag:
 
 ```bash
-git tag v0.1.8
+git tag v0.1.9
 git push origin main
-git push origin v0.1.8
+git push origin v0.1.9
 ```
 
 The workflow builds Linux, Windows, and macOS installers and uploads them to the matching GitHub Release.
@@ -117,7 +117,20 @@ npm run tauri dev
 
 ### ChatGPT OAuth Bridge
 
-The experimental provider expects a local `openai-oauth` style proxy and Codex auth on the host machine. Desktop builds can start the proxy from the inspector.
+The experimental provider uses an Aref-owned Codex OAuth home under the app config directory. Desktop builds can start login and the local `openai-oauth` proxy from the inspector without relying on your global `~/.codex` login.
+
+Manual verification:
+
+1. Windows: `%USERPROFILE%\.codex\auth.json` does not need to exist.
+2. Start Aref and choose ChatGPT OAuth.
+3. Click Log in. A visible terminal opens for Codex device auth.
+4. Complete the browser/device login.
+5. Confirm the app config directory contains `codex-oauth/codex/auth.json`.
+6. Start the proxy or wait for Aref to start it.
+7. Confirm `http://127.0.0.1:10531/v1/models` or the app provider state is ready.
+8. Run an AI image generation request.
+
+On macOS and Linux, verify both a fresh Aref-owned OAuth login and existing legacy Codex auth paths still report a clear login/proxy state. Auth file contents contain tokens and must not be copied into logs or issues.
 
 ## `.aref` Project Format
 

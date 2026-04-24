@@ -192,6 +192,7 @@ export function LeftSidebar({
   );
   const oauthNeedsLogin = ima2SidecarSettings.oauthStatus === "auth_required"
     || ima2SidecarSettings.codexAuthStatus !== "authed";
+  const oauthNeedsArefLogin = ima2SidecarSettings.codexAuthStatus === "auth_file_missing";
   const oauthReady = ima2SidecarSettings.oauthStatus === "ready";
   const oauthBusy = ima2SidecarSettingsStatus === "loading"
     || ima2SidecarSettingsStatus === "saving"
@@ -219,7 +220,7 @@ export function LeftSidebar({
     oauthStatusMessage = "Checking.";
   } else if (oauthNeedsLogin) {
     oauthPrimaryActionLabel = "Log in";
-    oauthStatusMessage = "Login required.";
+    oauthStatusMessage = oauthNeedsArefLogin ? "Aref login required." : "Login required.";
   } else if (ima2SidecarSettings.oauthStatus === "starting") {
     oauthPrimaryActionLabel = "Checking";
     oauthStatusMessage = "Checking.";

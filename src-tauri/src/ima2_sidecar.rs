@@ -58,6 +58,13 @@ struct ManagedIma2Proxy {
     base_url: String,
 }
 
+#[derive(Debug, Clone)]
+struct ArefCodexAuthEnv {
+    codex_home: PathBuf,
+    chatgpt_local_home: PathBuf,
+    auth_file: PathBuf,
+}
+
 impl Drop for ManagedIma2Proxy {
     fn drop(&mut self) {
         let _ = self.child.kill();
@@ -375,7 +382,77 @@ fn extension_from_mime_type(mime_type: &str) -> &'static str {
     }
 }
 
-fn codex_home_dir() -> Option<PathBuf> {
+fn aref_codex_auth_env(app: &AppHandle) -> Result<ArefCodexAuthEnv, String> {
+    let root = app_config_dir(app)?.join("codex-oauth");
+    let codex_home = root.join("codex");
+    let chatgpt_local_home = root.join("chatgpt-local");
+
+    fs::create_dir_all(&codex_home).map_err(|error| error.to_string())?;
+    fs::create_dir_all(&chatgpt_local_home).map_err(|error| error.to_string())?;
+
+    Ok(ArefCodexAuthEnv {
+        auth_file: codex_home.join("auth.json"),
+        codex_home,
+        chatgpt_local_home,
+    })
+}
+
+fn apply_aref_codex_auth_env(command: &mut Command, auth_env: &ArefCodexAuthEnv) {
+    command.env("CODEX_HOME", &auth_env.codex_home);
+    command.env("CHATGPT_LOCAL_HOME", &auth_env.chatgpt_local_home);
+}
+
+fn upsert_codex_file_credentials_config(contents: &str) -> String {
+    let mut next_lines = Vec::new();
+    let mut found = false;
+
+    for line in contents.lines() {
+        let trimmed = line.trim_start();
+        let key = trimmed
+            .split_once('=')
+            .map(|(candidate, _value)| candidate.trim());
+
+        if !trimmed.starts_with('#') && key == Some("cli_auth_credentials_store") {
+            let indent = &line[..line.len() - trimmed.len()];
+            next_lines.push(format!("{indent}cli_auth_credentials_store = \"file\""));
+            found = true;
+        } else {
+            next_lines.push(line.to_string());
+        }
+    }
+
+    if !found {
+        if !next_lines.is_empty() {
+            next_lines.push(String::new());
+        }
+        next_lines.push("cli_auth_credentials_store = \"file\"".to_string());
+    }
+
+    let mut next = next_lines.join("\n");
+    next.push('\n');
+    next
+}
+
+fn ensure_codex_file_credentials_config(auth_env: &ArefCodexAuthEnv) -> Result<(), String> {
+    fs::create_dir_all(&auth_env.codex_home).map_err(|error| error.to_string())?;
+    fs::create_dir_all(&auth_env.chatgpt_local_home).map_err(|error| error.to_string())?;
+
+    let config_path = auth_env.codex_home.join("config.toml");
+    let current = match fs::read_to_string(&config_path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(error.to_string()),
+    };
+    let next = upsert_codex_file_credentials_config(&current);
+
+    if current != next {
+        fs::write(&config_path, next).map_err(|error| error.to_string())?;
+    }
+
+    Ok(())
+}
+
+fn legacy_codex_home_dir() -> Option<PathBuf> {
     let codex_home = trim_to_option(env::var("CODEX_HOME").ok()).map(PathBuf::from);
     if codex_home.is_some() {
         return codex_home;
@@ -392,14 +469,14 @@ fn user_home_dir() -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
-fn codex_auth_paths() -> Vec<PathBuf> {
+fn legacy_codex_auth_paths() -> Vec<PathBuf> {
     let mut paths = Vec::new();
 
     if let Some(chatgpt_home) = trim_to_option(env::var("CHATGPT_LOCAL_HOME").ok()) {
         paths.push(PathBuf::from(chatgpt_home).join("auth.json"));
     }
 
-    if let Some(codex_home) = codex_home_dir() {
+    if let Some(codex_home) = legacy_codex_home_dir() {
         paths.push(codex_home.join("auth.json"));
     }
 
@@ -411,8 +488,23 @@ fn codex_auth_paths() -> Vec<PathBuf> {
     paths
 }
 
-fn has_codex_auth_file() -> bool {
-    codex_auth_paths().into_iter().any(|path| path.exists())
+fn codex_auth_paths(auth_env: &ArefCodexAuthEnv) -> Vec<PathBuf> {
+    let mut paths = vec![auth_env.auth_file.clone()];
+
+    for path in legacy_codex_auth_paths() {
+        if !paths.iter().any(|existing| existing == &path) {
+            paths.push(path);
+        }
+    }
+
+    paths
+}
+
+fn has_legacy_codex_auth_file(auth_env: &ArefCodexAuthEnv) -> bool {
+    codex_auth_paths(auth_env)
+        .into_iter()
+        .skip(1)
+        .any(|path| path.exists())
 }
 
 fn codex_binary_candidates() -> &'static [&'static str] {
@@ -454,7 +546,7 @@ fn hidden_command(binary: &str) -> Command {
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg_attr(not(any(target_os = "windows", test)), allow(dead_code))]
 fn quote_windows_cmd_token(token: &str) -> String {
     if token.is_empty()
         || token.chars().any(|character| {
@@ -470,7 +562,7 @@ fn quote_windows_cmd_token(token: &str) -> String {
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg_attr(not(any(target_os = "windows", test)), allow(dead_code))]
 fn build_windows_cmd_line<S: AsRef<str>>(binary: &str, args: &[S]) -> String {
     std::iter::once(quote_windows_cmd_token(binary))
         .chain(args.iter().map(|arg| quote_windows_cmd_token(arg.as_ref())))
@@ -501,8 +593,11 @@ fn run_hidden_command_with_timeout<S: AsRef<str>>(
     binary: &str,
     args: &[S],
     timeout: Duration,
+    auth_env: &ArefCodexAuthEnv,
 ) -> Result<Option<std::process::Output>, std::io::Error> {
-    let mut child = hidden_command_with_args(binary, args)
+    let mut command = hidden_command_with_args(binary, args);
+    apply_aref_codex_auth_env(&mut command, auth_env);
+    let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -553,13 +648,13 @@ fn codex_login_status_from_output(
     }
 }
 
-fn probe_codex_login_status() -> String {
+fn probe_codex_login_status(auth_env: &ArefCodexAuthEnv) -> String {
     let timeout = Duration::from_millis(CODEX_LOGIN_STATUS_TIMEOUT_MILLISECONDS);
     let mut saw_unauthed = false;
     let mut saw_unknown = false;
 
     for binary in codex_binary_candidates() {
-        match run_hidden_command_with_timeout(binary, &["login", "status"], timeout) {
+        match run_hidden_command_with_timeout(binary, &["login", "status"], timeout, auth_env) {
             Ok(Some(output)) => {
                 let status = codex_login_status_from_output(
                     output.status.success(),
@@ -587,11 +682,23 @@ fn probe_codex_login_status() -> String {
     }
 }
 
-fn detect_codex_auth_status() -> String {
-    if has_codex_auth_file() {
-        "authed".to_string()
+fn detect_codex_auth_status(app: &AppHandle) -> Result<String, String> {
+    let auth_env = aref_codex_auth_env(app)?;
+    ensure_codex_file_credentials_config(&auth_env)?;
+
+    if auth_env.auth_file.exists() {
+        return Ok("authed".to_string());
+    }
+
+    if has_legacy_codex_auth_file(&auth_env) {
+        return Ok("auth_file_missing".to_string());
+    }
+
+    let status = probe_codex_login_status(&auth_env);
+    if status == "authed" && !auth_env.auth_file.exists() {
+        Ok("auth_file_missing".to_string())
     } else {
-        probe_codex_login_status()
+        Ok(status)
     }
 }
 
@@ -619,7 +726,7 @@ fn oauth_status_for_ready_proxy(codex_auth_status: &str) -> String {
     }
 }
 
-fn openai_oauth_proxy_args(port: u16) -> Vec<String> {
+fn openai_oauth_proxy_args(port: u16, auth_file: &Path) -> Vec<String> {
     vec![
         "--yes".to_string(),
         "openai-oauth@latest".to_string(),
@@ -627,6 +734,8 @@ fn openai_oauth_proxy_args(port: u16) -> Vec<String> {
         port.to_string(),
         "--models".to_string(),
         IMA2_SIDECAR_PROXY_MODELS.to_string(),
+        "--oauth-file".to_string(),
+        auth_file.to_string_lossy().to_string(),
     ]
 }
 
@@ -915,7 +1024,7 @@ async fn fetch_ima2_sidecar_snapshot(
     cleanup_managed_proxy(runtime).await?;
 
     let settings = resolve_ima2_sidecar_settings(app)?;
-    let codex_auth_status = detect_codex_auth_status();
+    let codex_auth_status = detect_codex_auth_status(app)?;
     let proxy_managed = managed_proxy_matches(runtime, &settings.base_url).await?;
     let client = Client::builder()
         .timeout(Duration::from_secs(IMA2_SIDECAR_HEALTH_TIMEOUT_SECONDS))
@@ -976,8 +1085,14 @@ async fn fetch_ima2_sidecar_snapshot(
     })
 }
 
-fn try_spawn_process(binary: &str, args: &[&str]) -> Result<(), String> {
-    let mut child = hidden_command_with_args(binary, args)
+fn try_spawn_process(
+    binary: &str,
+    args: &[&str],
+    auth_env: &ArefCodexAuthEnv,
+) -> Result<(), String> {
+    let mut command = hidden_command_with_args(binary, args);
+    apply_aref_codex_auth_env(&mut command, auth_env);
+    let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -992,19 +1107,67 @@ fn try_spawn_process(binary: &str, args: &[&str]) -> Result<(), String> {
     }
 }
 
-fn launch_codex_login_process() -> Result<(), String> {
-    let npx_login_args = ["--yes", "@openai/codex@latest", "login"];
+#[cfg(target_os = "windows")]
+fn build_windows_env_set(name: &str, value: &Path) -> String {
+    format!("set \"{}={}\"", name, value.to_string_lossy())
+}
 
-    for binary in codex_binary_candidates() {
-        match try_spawn_process(binary, &["login"]) {
-            Ok(()) => return Ok(()),
-            Err(error) if error.contains("No such file or directory") => continue,
-            Err(error) if error.contains("cannot find the file") => continue,
-            Err(_) => continue,
-        }
+#[cfg(target_os = "windows")]
+fn build_windows_visible_login_command(auth_env: &ArefCodexAuthEnv) -> String {
+    let login_args = ["--yes", "@openai/codex@latest", "login", "--device-auth"];
+    [
+        build_windows_env_set("CODEX_HOME", &auth_env.codex_home),
+        build_windows_env_set("CHATGPT_LOCAL_HOME", &auth_env.chatgpt_local_home),
+        build_windows_cmd_line(npx_binary(), &login_args),
+    ]
+    .join(" ^&^& ")
+}
+
+#[cfg(target_os = "windows")]
+fn launch_windows_visible_codex_login(auth_env: &ArefCodexAuthEnv) -> Result<(), String> {
+    let login_command = build_windows_visible_login_command(auth_env);
+    let start_command = format!("start \"Aref Codex Login\" cmd.exe /k {login_command}");
+    let mut child = hidden_command("cmd.exe")
+        .args(["/d", "/s", "/c"])
+        .arg(start_command)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| error.to_string())?;
+
+    thread::sleep(Duration::from_millis(800));
+    match child.try_wait() {
+        Ok(Some(status)) if !status.success() => Err(format!("cmd.exe exited with {status}")),
+        Ok(_) => Ok(()),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+fn launch_codex_login_process(app: &AppHandle) -> Result<(), String> {
+    let auth_env = aref_codex_auth_env(app)?;
+    ensure_codex_file_credentials_config(&auth_env)?;
+
+    #[cfg(target_os = "windows")]
+    {
+        return launch_windows_visible_codex_login(&auth_env);
     }
 
-    try_spawn_process(npx_binary(), &npx_login_args)
+    #[cfg(not(target_os = "windows"))]
+    {
+        let npx_login_args = ["--yes", "@openai/codex@latest", "login"];
+
+        for binary in codex_binary_candidates() {
+            match try_spawn_process(binary, &["login"], &auth_env) {
+                Ok(()) => return Ok(()),
+                Err(error) if error.contains("No such file or directory") => continue,
+                Err(error) if error.contains("cannot find the file") => continue,
+                Err(_) => continue,
+            }
+        }
+
+        try_spawn_process(npx_binary(), &npx_login_args, &auth_env)
+    }
 }
 
 async fn start_managed_proxy(
@@ -1020,14 +1183,29 @@ async fn start_managed_proxy(
 
     stop_managed_proxy(runtime).await?;
 
+    let auth_env = aref_codex_auth_env(app)?;
+    ensure_codex_file_credentials_config(&auth_env)?;
     let port = parse_proxy_port(&settings.base_url)?;
-    let proxy_args = openai_oauth_proxy_args(port);
-    let child = hidden_command_with_args(npx_binary(), &proxy_args)
+    let proxy_args = openai_oauth_proxy_args(port, &auth_env.auth_file);
+    let auth_file_exists = auth_env.auth_file.exists();
+    let mut proxy_command = hidden_command_with_args(npx_binary(), &proxy_args);
+    apply_aref_codex_auth_env(&mut proxy_command, &auth_env);
+    let child = proxy_command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .map_err(|error| format!("Failed to start openai-oauth: {error}"))?;
+        .map_err(|error| {
+            format!(
+                "Failed to start openai-oauth via {} for {} with auth file {} (exists: {}) and CODEX_HOME {}: {}",
+                npx_binary(),
+                settings.base_url,
+                auth_env.auth_file.display(),
+                auth_file_exists,
+                auth_env.codex_home.display(),
+                error
+            )
+        })?;
 
     runtime.proxy.lock().await.replace(ManagedIma2Proxy {
         child,
@@ -1456,8 +1634,8 @@ pub async fn start_ima2_sidecar_proxy(
 }
 
 #[tauri::command]
-pub async fn launch_ima2_sidecar_login() -> Result<(), String> {
-    launch_codex_login_process()
+pub async fn launch_ima2_sidecar_login(app: AppHandle) -> Result<(), String> {
+    launch_codex_login_process(&app)
 }
 
 #[tauri::command]
@@ -1473,6 +1651,13 @@ pub async fn start_ima2_sidecar_generation(
 
     let snapshot = ensure_managed_proxy_ready(&app, runtime.inner()).await?;
     if snapshot.oauth_status == "auth_required" {
+        if snapshot.codex_auth_status == "auth_file_missing" {
+            let auth_env = aref_codex_auth_env(&app)?;
+            return Err(format!(
+                "Codex login is not available as a file for Aref. Use Aref ChatGPT OAuth login to create {}.",
+                auth_env.auth_file.display()
+            ));
+        }
         return Err("ChatGPT OAuth needs login before generation can start.".to_string());
     }
     if snapshot.oauth_status == "starting" {
@@ -1705,13 +1890,65 @@ mod tests {
     }
 
     #[test]
+    fn writes_codex_file_credentials_config() {
+        let root = env::temp_dir().join(format!("aref-codex-auth-test-{}", Uuid::new_v4()));
+        let auth_env = ArefCodexAuthEnv {
+            codex_home: root.join("codex"),
+            chatgpt_local_home: root.join("chatgpt-local"),
+            auth_file: root.join("codex").join("auth.json"),
+        };
+
+        ensure_codex_file_credentials_config(&auth_env).expect("config should be written");
+        let contents =
+            fs::read_to_string(auth_env.codex_home.join("config.toml")).expect("config readable");
+        assert!(contents.contains("cli_auth_credentials_store = \"file\""));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rewrites_existing_codex_credentials_store_to_file() {
+        let root = env::temp_dir().join(format!("aref-codex-auth-test-{}", Uuid::new_v4()));
+        let auth_env = ArefCodexAuthEnv {
+            codex_home: root.join("codex"),
+            chatgpt_local_home: root.join("chatgpt-local"),
+            auth_file: root.join("codex").join("auth.json"),
+        };
+        fs::create_dir_all(&auth_env.codex_home).expect("codex dir");
+        fs::write(
+            auth_env.codex_home.join("config.toml"),
+            "model = \"gpt-5.4\"\ncli_auth_credentials_store = \"auto\"\n",
+        )
+        .expect("seed config");
+
+        ensure_codex_file_credentials_config(&auth_env).expect("config should be rewritten");
+        let contents =
+            fs::read_to_string(auth_env.codex_home.join("config.toml")).expect("config readable");
+        assert!(contents.contains("model = \"gpt-5.4\""));
+        assert!(contents.contains("cli_auth_credentials_store = \"file\""));
+        assert!(!contents.contains("cli_auth_credentials_store = \"auto\""));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn quotes_windows_cmd_tokens_with_spaces() {
+        assert_eq!(
+            build_windows_cmd_line("npx.cmd", &["--yes", "C:\\Users\\Aref User\\auth.json"]),
+            "npx.cmd --yes \"C:\\Users\\Aref User\\auth.json\""
+        );
+    }
+
+    #[test]
     fn starts_proxy_with_static_models_to_avoid_startup_discovery_failures() {
-        let args = openai_oauth_proxy_args(10531);
+        let auth_file = PathBuf::from("C:\\Users\\Aref User\\auth.json");
+        let args = openai_oauth_proxy_args(10531, &auth_file);
 
         assert_eq!(args[0], "--yes");
         assert_eq!(args[1], "openai-oauth@latest");
-        assert!(!args.contains(&"--oauth-file".to_string()));
         assert!(args.contains(&"--models".to_string()));
         assert!(args.contains(&IMA2_SIDECAR_PROXY_MODELS.to_string()));
+        assert!(args.contains(&"--oauth-file".to_string()));
+        assert!(args.contains(&auth_file.to_string_lossy().to_string()));
     }
 }

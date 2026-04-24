@@ -82,6 +82,10 @@ export function mapOpenAiOAuthAvailability(options: {
     return createAvailability("unavailable", "Unavailable", error ?? "OAuth bridge settings failed to load.");
   }
 
+  if (snapshot.codexAuthStatus === "auth_file_missing") {
+    return createAvailability("auth-required", "Log in", "Use Aref login to create local OAuth credentials.");
+  }
+
   if (snapshot.oauthStatus === "auth_required" || snapshot.codexAuthStatus !== "authed") {
     return createAvailability("auth-required", "Log in", "Log in to use OAuth.");
   }

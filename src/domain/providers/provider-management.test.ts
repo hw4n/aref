@@ -100,6 +100,23 @@ describe("provider management", () => {
         error: null,
       }).label,
     ).toBe("Log in");
+
+    expect(
+      mapOpenAiOAuthAvailability({
+        snapshot: {
+          configured: true,
+          available: false,
+          source: "stored",
+          baseUrl: "http://127.0.0.1:10531",
+          oauthStatus: "auth_required",
+          codexAuthStatus: "auth_file_missing",
+          proxyManaged: true,
+        },
+        isDesktop: true,
+        status: "idle",
+        error: null,
+      }).reason,
+    ).toBe("Use Aref login to create local OAuth credentials.");
   });
 
   it("maps mock provider gating to disabled or available", () => {
