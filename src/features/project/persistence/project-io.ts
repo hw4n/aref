@@ -281,6 +281,19 @@ export interface ChatGptShareImportResult {
   skippedCount: number;
 }
 
+export interface ClipboardImageFileDraft {
+  imagePath: string;
+  sourceName?: string;
+}
+
+export async function writeImageFilesToClipboard(files: ClipboardImageFileDraft[]) {
+  if (!hasTauriRuntime()) {
+    throw new Error("Native file clipboard is only available in the desktop app.");
+  }
+
+  return invoke<number>("write_image_files_to_clipboard", { files });
+}
+
 export async function importChatGptShareImages(url: string): Promise<ChatGptShareImportResult> {
   if (!hasTauriRuntime()) {
     throw new Error("ChatGPT share import is only available in the desktop app.");

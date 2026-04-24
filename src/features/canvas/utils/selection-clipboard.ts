@@ -1,9 +1,20 @@
 import { getAssetsBounds } from "@/domain/assets/asset-geometry";
 import type { AssetItem } from "@/domain/assets/types";
-import { isLikelyFilePath, readManagedImageBytes } from "@/features/project/persistence/project-io";
+import {
+  isLikelyFilePath,
+  readManagedImageBytes,
+  writeImageFilesToClipboard,
+} from "@/features/project/persistence/project-io";
 import { hasTauriRuntime } from "@/features/project/persistence/tauri-runtime";
 
 const MAX_CLIPBOARD_CANVAS_EDGE = 16_384;
+
+export type ClipboardCopyMode = "files" | "single-image" | "composite-image";
+
+export interface ClipboardCopyResult {
+  copiedCount: number;
+  mode: ClipboardCopyMode;
+}
 
 function inferMimeTypeFromSource(source: string) {
   const extension = source.split(/[\\/]/).at(-1)?.split(".").at(-1)?.toLowerCase();
@@ -87,14 +98,54 @@ async function writePngBlobToClipboard(blob: Blob) {
   ]);
 }
 
-export async function copyAssetsToClipboard(assets: AssetItem[]) {
+async function copyAssetsAsNativeFiles(assets: AssetItem[]) {
+  if (!hasTauriRuntime() || assets.length < 2) {
+    return 0;
+  }
+
+  const fileAssets = assets.map((asset) => {
+    if (!isLikelyFilePath(asset.imagePath)) {
+      return null;
+    }
+
+    return {
+      imagePath: asset.imagePath,
+      sourceName: asset.sourceName,
+    };
+  });
+
+  if (fileAssets.some((asset) => asset === null)) {
+    return 0;
+  }
+
+  const clipboardFiles = fileAssets.flatMap((asset) => (asset ? [asset] : []));
+
+  try {
+    return await writeImageFilesToClipboard(clipboardFiles);
+  } catch {
+    return 0;
+  }
+}
+
+export async function copyAssetsToClipboard(assets: AssetItem[]): Promise<ClipboardCopyResult> {
   const visibleAssets = assets
     .filter((asset) => !asset.hidden)
     .sort((left, right) => left.zIndex - right.zIndex);
   const bounds = getAssetsBounds(visibleAssets);
 
   if (!bounds) {
-    return 0;
+    return {
+      copiedCount: 0,
+      mode: "composite-image",
+    };
+  }
+
+  const nativeFileCount = await copyAssetsAsNativeFiles(visibleAssets);
+  if (nativeFileCount > 0) {
+    return {
+      copiedCount: nativeFileCount,
+      mode: "files",
+    };
   }
 
   const canvasWidth = Math.max(1, Math.ceil(bounds.width));
@@ -139,7 +190,10 @@ export async function copyAssetsToClipboard(assets: AssetItem[]) {
     }
 
     await writePngBlobToClipboard(await canvasToPngBlob(canvas));
-    return visibleAssets.length;
+    return {
+      copiedCount: visibleAssets.length,
+      mode: visibleAssets.length === 1 ? "single-image" : "composite-image",
+    };
   } finally {
     for (const loadedImage of loadedImages) {
       loadedImage.revoke();

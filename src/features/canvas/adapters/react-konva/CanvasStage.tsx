@@ -28,7 +28,10 @@ import { normalizeRect, rectsIntersect } from "@/domain/shared/geometry";
 import type { Point } from "@/domain/shared/types";
 import { useCanvasShortcuts } from "@/features/canvas/hooks/use-canvas-shortcuts";
 import { useStageContainerSize } from "@/features/canvas/hooks/use-stage-container-size";
-import { copyAssetsToClipboard } from "@/features/canvas/utils/selection-clipboard";
+import {
+  copyAssetsToClipboard,
+  type ClipboardCopyResult,
+} from "@/features/canvas/utils/selection-clipboard";
 import {
   ROTATION_SNAP_TOLERANCE_DEGREES,
   getRotationSnapAngles,
@@ -61,6 +64,24 @@ interface DragSession {
   selectedIds: string[];
   originPosition: Point;
   startPositions: Record<string, Point>;
+}
+
+function isAdditiveSelectionModifier(event: Pick<MouseEvent, "ctrlKey" | "metaKey" | "shiftKey">) {
+  return event.shiftKey || event.ctrlKey || event.metaKey;
+}
+
+function getClipboardSuccessDescription(result: ClipboardCopyResult) {
+  if (result.mode === "files") {
+    return result.copiedCount === 1
+      ? "Image file is on the clipboard."
+      : `${result.copiedCount} image files are on the clipboard.`;
+  }
+
+  if (result.mode === "single-image") {
+    return "Image PNG is on the clipboard.";
+  }
+
+  return `${result.copiedCount} items rendered as one PNG.`;
 }
 
 function getAssetInitial(asset: AssetItem) {
@@ -430,7 +451,7 @@ function AssetLayerItem({
           return;
         }
 
-        onSelect(asset.id, mouseEvent.shiftKey);
+        onSelect(asset.id, isAdditiveSelectionModifier(mouseEvent));
       }}
       onTap={(event) => {
         event.cancelBubble = true;
@@ -450,7 +471,7 @@ function AssetLayerItem({
             y: event.evt.clientY,
           },
           isSelected,
-          event.evt.shiftKey,
+          isAdditiveSelectionModifier(event.evt),
         );
       }}
       onDragStart={(event) => {
@@ -591,30 +612,32 @@ export function CanvasStage() {
   const hideSelected = useAppStore((state) => state.hideSelected);
   const unhideSelected = useAppStore((state) => state.unhideSelected);
   const unhideAllHidden = useAppStore((state) => state.unhideAllHidden);
+  const undoProjectChange = useAppStore((state) => state.undoProjectChange);
+  const redoProjectChange = useAppStore((state) => state.redoProjectChange);
   const undoVisibilityChange = useAppStore((state) => state.undoVisibilityChange);
   const redoVisibilityChange = useAppStore((state) => state.redoVisibilityChange);
   const zoomCameraAtPoint = useAppStore((state) => state.zoomCameraAtPoint);
   const isSpacePressed = useAppStore((state) => state.isSpacePressed);
   const pushToast = useAppStore((state) => state.pushToast);
 
-  const copySelectionToClipboard = useCallback(async () => {
+  const writeSelectedAssetsToClipboard = useCallback(async () => {
     const selectedAssets = assets.filter((asset) => selectedAssetIds.includes(asset.id));
 
-    if (selectedAssets.length === 0) {
-      return;
-    }
+    return copyAssetsToClipboard(selectedAssets);
+  }, [assets, selectedAssetIds]);
 
+  const copySelectionToClipboard = useCallback(async () => {
     try {
-      const copiedCount = await copyAssetsToClipboard(selectedAssets);
+      const result = await writeSelectedAssetsToClipboard();
 
-      if (copiedCount === 0) {
+      if (result.copiedCount === 0) {
         return;
       }
 
       pushToast({
         kind: "success",
-        title: copiedCount === 1 ? "Copied image" : "Copied selection",
-        description: copiedCount === 1 ? "Image PNG is on the clipboard." : `${copiedCount} items rendered as one PNG.`,
+        title: result.copiedCount === 1 ? "Copied image" : "Copied selection",
+        description: getClipboardSuccessDescription(result),
       });
     } catch (error) {
       pushToast({
@@ -623,13 +646,37 @@ export function CanvasStage() {
         description: error instanceof Error ? error.message : "Could not copy the selection.",
       });
     }
-  }, [assets, pushToast, selectedAssetIds]);
+  }, [pushToast, writeSelectedAssetsToClipboard]);
+
+  const cutSelectionToClipboard = useCallback(async () => {
+    try {
+      const result = await writeSelectedAssetsToClipboard();
+
+      if (result.copiedCount === 0) {
+        return;
+      }
+
+      deleteSelection();
+      pushToast({
+        kind: "success",
+        title: result.copiedCount === 1 ? "Cut image" : "Cut selection",
+        description: getClipboardSuccessDescription(result),
+      });
+    } catch (error) {
+      pushToast({
+        kind: "error",
+        title: "Cut failed",
+        description: error instanceof Error ? error.message : "Could not cut the selection.",
+      });
+    }
+  }, [deleteSelection, pushToast, writeSelectedAssetsToClipboard]);
 
   useCanvasShortcuts({
     frameAll,
     frameSelection,
     centerSelection,
     copySelectionToClipboard,
+    cutSelectionToClipboard,
     resetZoom,
     selectAll,
     duplicateSelection,
@@ -638,6 +685,8 @@ export function CanvasStage() {
     hideSelected,
     unhideSelected,
     unhideAllHidden,
+    undoProjectChange,
+    redoProjectChange,
     undoVisibilityChange,
     redoVisibilityChange,
     bringSelectionForward,
@@ -1072,7 +1121,7 @@ export function CanvasStage() {
                 const originWorld = screenToWorld(camera, pointer);
                 setCanvasInteractionActive(true);
                 setMarqueeSession({
-                  additive: event.evt.shiftKey,
+                  additive: isAdditiveSelectionModifier(event.evt),
                   originWorld,
                   originScreen: pointer,
                 });

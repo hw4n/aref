@@ -120,6 +120,43 @@ describe("app store", () => {
     expect(store.getState().project.assets[duplicatedIds[0]!]).toBeUndefined();
   });
 
+  it("supports undo and redo for asset edits", () => {
+    const store = createSeededStore();
+
+    store.getState().setAssetPosition("asset-forest", { x: 120, y: -40 });
+    expect(store.getState().project.assets["asset-forest"]).toMatchObject({
+      x: 120,
+      y: -40,
+    });
+
+    store.getState().undoProjectChange();
+    expect(store.getState().project.assets["asset-forest"]).toMatchObject({
+      x: -420,
+      y: -120,
+    });
+
+    store.getState().redoProjectChange();
+    expect(store.getState().project.assets["asset-forest"]).toMatchObject({
+      x: 120,
+      y: -40,
+    });
+  });
+
+  it("restores deleted selections through project undo", () => {
+    const store = createSeededStore();
+
+    store.getState().selectAsset("asset-forest");
+    store.getState().deleteSelection();
+    expect(store.getState().project.assets["asset-forest"]).toBeUndefined();
+
+    store.getState().undoProjectChange();
+    expect(store.getState().project.assets["asset-forest"]).toBeDefined();
+    expect(store.getState().project.selection.assetIds).toEqual(["asset-forest"]);
+
+    store.getState().redoProjectChange();
+    expect(store.getState().project.assets["asset-forest"]).toBeUndefined();
+  });
+
   it("does not move locked assets and can toggle lock state", () => {
     const store = createSeededStore();
 

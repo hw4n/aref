@@ -1,3 +1,4 @@
+mod clipboard_files;
 mod ima2_sidecar;
 mod image_metadata;
 mod openai_provider;
@@ -12,6 +13,7 @@ pub fn run() {
         .manage(ima2_sidecar::Ima2SidecarRuntimeState::default())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
+            clipboard_files::write_image_files_to_clipboard,
             project_persistence::import_chatgpt_share_images,
             project_persistence::ingest_image_asset,
             project_persistence::read_image_bytes,

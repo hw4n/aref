@@ -5,6 +5,7 @@ type CanvasShortcutHandlers = {
   frameSelection: () => void;
   centerSelection: () => void;
   copySelectionToClipboard: () => void | Promise<void>;
+  cutSelectionToClipboard: () => void | Promise<void>;
   resetZoom: () => void;
   selectAll: () => void;
   duplicateSelection: () => void;
@@ -13,6 +14,8 @@ type CanvasShortcutHandlers = {
   hideSelected: () => void;
   unhideSelected: () => void;
   unhideAllHidden: () => void;
+  undoProjectChange: () => void;
+  redoProjectChange: () => void;
   undoVisibilityChange: () => void;
   redoVisibilityChange: () => void;
   bringSelectionForward: () => void;
@@ -62,6 +65,9 @@ export function useCanvasShortcuts(handlers: CanvasShortcutHandlers) {
       } else if ((event.metaKey || event.ctrlKey) && event.code === "KeyC") {
         event.preventDefault();
         void handlers.copySelectionToClipboard();
+      } else if ((event.metaKey || event.ctrlKey) && event.code === "KeyX") {
+        event.preventDefault();
+        void handlers.cutSelectionToClipboard();
       } else if (event.code === "KeyC") {
         event.preventDefault();
         handlers.centerSelection();
@@ -91,13 +97,13 @@ export function useCanvasShortcuts(handlers: CanvasShortcutHandlers) {
         handlers.hideSelected();
       } else if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.code === "KeyZ") {
         event.preventDefault();
-        handlers.redoVisibilityChange();
+        handlers.redoProjectChange();
       } else if ((event.metaKey || event.ctrlKey) && event.code === "KeyY") {
         event.preventDefault();
-        handlers.redoVisibilityChange();
+        handlers.redoProjectChange();
       } else if ((event.metaKey || event.ctrlKey) && event.code === "KeyZ") {
         event.preventDefault();
-        handlers.undoVisibilityChange();
+        handlers.undoProjectChange();
       } else if (event.key === "}" || (event.code === "BracketRight" && event.shiftKey)) {
         event.preventDefault();
         handlers.bringSelectionToFront();

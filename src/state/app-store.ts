@@ -76,6 +76,10 @@ export interface AppStoreState {
     undoStack: VisibilityHistoryEntry[];
     redoStack: VisibilityHistoryEntry[];
   };
+  projectHistory: {
+    undoStack: Project[];
+    redoStack: Project[];
+  };
   replaceProject: (project: Project) => void;
   importAssets: (drafts: ImportedImageDraft[]) => void;
   setViewportSize: (viewportWidth: number, viewportHeight: number) => void;
@@ -118,6 +122,8 @@ export interface AppStoreState {
   unhideAllHidden: () => void;
   setAssetHidden: (assetId: string, hidden: boolean) => void;
   revealHiddenAsset: (assetId: string) => void;
+  undoProjectChange: () => void;
+  redoProjectChange: () => void;
   undoVisibilityChange: () => void;
   redoVisibilityChange: () => void;
   bringSelectionForward: () => void;
@@ -197,6 +203,7 @@ function syncProjectGroups(project: Project, assets: Record<string, AssetItem>) 
 }
 
 const MAX_VISIBILITY_HISTORY = 64;
+const MAX_PROJECT_HISTORY = 80;
 const MAX_DIAGNOSTIC_LOGS = 250;
 
 function createDefaultGenerationDraft(): GenerationSheetDraft {
@@ -327,13 +334,13 @@ function applyVisibilityEntry(
   });
 
   if (options?.historyMode === "push-undo" && options.pairedEntry) {
-    return {
+    return pushProjectHistory(state, {
       project: nextProject,
       visibilityHistory: {
         undoStack: [...state.visibilityHistory.undoStack, options.pairedEntry].slice(-MAX_VISIBILITY_HISTORY),
         redoStack: [],
       },
-    };
+    });
   }
 
   if (options?.historyMode === "push-redo" && options.pairedEntry) {
@@ -352,6 +359,19 @@ function applyVisibilityEntry(
   };
 }
 
+function pushProjectHistory(
+  state: AppStoreState,
+  update: Partial<AppStoreState> & { project: Project },
+) {
+  return {
+    ...update,
+    projectHistory: {
+      undoStack: [...state.projectHistory.undoStack, state.project].slice(-MAX_PROJECT_HISTORY),
+      redoStack: [],
+    },
+  };
+}
+
 export function createAppStore(initialProject: Project = createEmptyProject()) {
   return createStore<AppStoreState>((set, get) => ({
     project: initialProject,
@@ -365,11 +385,19 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
       undoStack: [],
       redoStack: [],
     },
+    projectHistory: {
+      undoStack: [],
+      redoStack: [],
+    },
     replaceProject: (project) => {
       set({
         project,
         generationDraft: createDefaultGenerationDraft(),
         visibilityHistory: {
+          undoStack: [],
+          redoStack: [],
+        },
+        projectHistory: {
           undoStack: [],
           redoStack: [],
         },
@@ -383,7 +411,7 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
       set((state) => {
         const importedAssets = createImportedAssets(drafts, state.project.assets, state.project.camera);
 
-        return {
+        return pushProjectHistory(state, {
           project: bumpProject({
             ...state.project,
             assets: {
@@ -397,7 +425,7 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
             },
           }),
           generationDraft: resetGenerationSheetContext(state.generationDraft),
-        };
+        });
       });
     },
     setViewportSize: (viewportWidth, viewportHeight) => {
@@ -610,11 +638,11 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
       set((state) => {
         const asset = state.project.assets[assetId];
 
-        if (!asset || asset.locked) {
+        if (!asset || asset.locked || (asset.x === position.x && asset.y === position.y)) {
           return state;
         }
 
-        return {
+        return pushProjectHistory(state, {
           project: bumpProject({
             ...state.project,
             assets: {
@@ -627,7 +655,7 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
               },
             },
           }),
-        };
+        });
       });
     },
     setAssetPositions: (updates) => {
@@ -664,12 +692,12 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
           return state;
         }
 
-        return {
+        return pushProjectHistory(state, {
           project: bumpProject({
             ...state.project,
             assets: nextAssets,
           }),
-        };
+        });
       });
     },
     moveAssetsBy: (assetIds, delta) => {
@@ -677,7 +705,7 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
         return;
       }
 
-      set((state) => ({
+      set((state) => pushProjectHistory(state, {
         project: bumpProject({
           ...state.project,
           assets: updateAssetRecord(
@@ -698,7 +726,7 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
         return;
       }
 
-      set((state) => ({
+      set((state) => pushProjectHistory(state, {
         project: bumpProject({
           ...state.project,
           assets: updateAssetRecord(
@@ -865,13 +893,13 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
           }),
         );
 
-        return {
+        return pushProjectHistory(state, {
           project: bumpProject({
             ...state.project,
             assets: nextAssets,
             groups: syncProjectGroups(state.project, nextAssets),
           }),
-        };
+        });
       });
     },
     hideSelected: () => {
@@ -986,6 +1014,50 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
         });
       });
     },
+    undoProjectChange: () => {
+      set((state) => {
+        const previousProject = state.projectHistory.undoStack.at(-1);
+
+        if (!previousProject) {
+          return state;
+        }
+
+        return {
+          project: previousProject,
+          generationDraft: resetGenerationSheetContext(state.generationDraft),
+          visibilityHistory: {
+            undoStack: [],
+            redoStack: [],
+          },
+          projectHistory: {
+            undoStack: state.projectHistory.undoStack.slice(0, -1),
+            redoStack: [...state.projectHistory.redoStack, state.project].slice(-MAX_PROJECT_HISTORY),
+          },
+        };
+      });
+    },
+    redoProjectChange: () => {
+      set((state) => {
+        const nextProject = state.projectHistory.redoStack.at(-1);
+
+        if (!nextProject) {
+          return state;
+        }
+
+        return {
+          project: nextProject,
+          generationDraft: resetGenerationSheetContext(state.generationDraft),
+          visibilityHistory: {
+            undoStack: [],
+            redoStack: [],
+          },
+          projectHistory: {
+            undoStack: [...state.projectHistory.undoStack, state.project].slice(-MAX_PROJECT_HISTORY),
+            redoStack: state.projectHistory.redoStack.slice(0, -1),
+          },
+        };
+      });
+    },
     undoVisibilityChange: () => {
       set((state) => {
         const entry = state.visibilityHistory.undoStack.at(-1);
@@ -1048,12 +1120,12 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
           return state;
         }
 
-        return {
+        return pushProjectHistory(state, {
           project: bumpProject({
             ...state.project,
             assets: nextAssets,
           }),
-        };
+        });
       });
     },
     sendSelectionBackward: () => {
@@ -1068,12 +1140,12 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
           return state;
         }
 
-        return {
+        return pushProjectHistory(state, {
           project: bumpProject({
             ...state.project,
             assets: nextAssets,
           }),
-        };
+        });
       });
     },
     bringSelectionToFront: () => {
@@ -1088,12 +1160,12 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
           return state;
         }
 
-        return {
+        return pushProjectHistory(state, {
           project: bumpProject({
             ...state.project,
             assets: nextAssets,
           }),
-        };
+        });
       });
     },
     sendSelectionToBack: () => {
@@ -1108,12 +1180,12 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
           return state;
         }
 
-        return {
+        return pushProjectHistory(state, {
           project: bumpProject({
             ...state.project,
             assets: nextAssets,
           }),
-        };
+        });
       });
     },
     groupSelection: () => {
@@ -1122,12 +1194,12 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
           return state;
         }
 
-        return {
+        return pushProjectHistory(state, {
           project: bumpProject({
             ...state.project,
             groups: createGroupFromSelection(state.project.groups, state.project.selection.assetIds),
           }),
-        };
+        });
       });
     },
     ungroupSelection: () => {
@@ -1138,12 +1210,12 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
           return state;
         }
 
-        return {
+        return pushProjectHistory(state, {
           project: bumpProject({
             ...state.project,
             groups: ungroupSelection(state.project.groups, state.project.selection.assetIds),
           }),
-        };
+        });
       });
     },
     duplicateSelection: () => {
@@ -1173,7 +1245,7 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
           updatedAt: timestamp,
         }));
 
-        return {
+        return pushProjectHistory(state, {
           project: bumpProject({
             ...state.project,
             assets: {
@@ -1187,7 +1259,7 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
             },
           }),
           generationDraft: resetGenerationSheetContext(state.generationDraft),
-        };
+        });
       });
     },
     deleteSelection: () => {
@@ -1208,7 +1280,7 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
           getHiddenAssetIds(nextAssets),
         );
 
-        return {
+        return pushProjectHistory(state, {
           project: bumpProject({
             ...state.project,
             assets: nextAssets,
@@ -1220,7 +1292,7 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
             },
           }),
           generationDraft: resetGenerationSheetContext(state.generationDraft),
-        };
+        });
       });
     },
     queueGenerationJob: (request, jobId) => {
@@ -1260,7 +1332,7 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
           return state;
         }
 
-        return {
+        return pushProjectHistory(state, {
           project: bumpProject({
             ...state.project,
             jobs: {
@@ -1271,7 +1343,7 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
               },
             },
           }),
-        };
+        });
       });
     },
     runGenerationJob: (jobId) => {

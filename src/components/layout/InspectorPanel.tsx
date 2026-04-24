@@ -25,6 +25,10 @@ interface InspectorPanelProps {
   onRerunGeneration: (jobId: string) => void | Promise<string | null>;
 }
 
+function isAdditiveSelectionModifier(event: { ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }) {
+  return event.shiftKey || event.ctrlKey || event.metaKey;
+}
+
 function GenerationJobCard({
   jobId,
   onCancelGeneration,
@@ -168,7 +172,7 @@ function AssetLayerRow({
     >
       <button
         className="asset-layer-row__main"
-        onClick={(event) => onSelect(asset.id, event.shiftKey)}
+        onClick={(event) => onSelect(asset.id, isAdditiveSelectionModifier(event))}
         title={asset.sourceName ?? asset.id}
       >
         <span className="asset-layer-row__thumb">
