@@ -22,7 +22,7 @@ Without AI, it is simply a free desktop referencing app: import images, lay them
 
 ## Preview
 
-<video src="docs/media/aref-generation-demo.mp4" controls muted playsinline width="100%"></video>
+![Aref generation demo](docs/media/aref-generation-demo.gif)
 
 Generate images from prompts and references, then move the results directly on the canvas.
 
@@ -84,7 +84,7 @@ npm run build:desktop
 Release tags are built by `.github/workflows/release.yml`:
 
 ```bash
-git tag v0.3.1
+git tag v0.3.2
 git push origin main
-git push origin v0.3.1
+git push origin v0.3.2
 ```

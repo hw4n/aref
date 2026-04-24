@@ -16,7 +16,7 @@ AIを使わない場合は、無料のリファレンスアプリとしてその
 
 ## プレビュー
 
-<video src="docs/media/aref-generation-demo.mp4" controls muted playsinline width="100%"></video>
+![Aref生成デモ](docs/media/aref-generation-demo.gif)
 
 プロンプトとリファレンスから画像を生成し、結果をそのままキャンバス上で移動、整理できます。
 

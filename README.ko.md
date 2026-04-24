@@ -16,7 +16,7 @@ AI를 쓰지 않으면 그냥 무료 레퍼런싱 앱입니다. 이미지를 가
 
 ## 미리보기
 
-<video src="docs/media/aref-generation-demo.mp4" controls muted playsinline width="100%"></video>
+![Aref 생성 데모](docs/media/aref-generation-demo.gif)
 
 프롬프트와 레퍼런스로 이미지를 생성하고, 결과물을 바로 캔버스 위에서 이동하고 정리할 수 있습니다.
 
