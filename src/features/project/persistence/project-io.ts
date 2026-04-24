@@ -187,6 +187,14 @@ export async function readManagedImageBytes(path: string) {
   return invoke<number[]>("read_image_bytes", { path });
 }
 
+export async function importChatGptShareImages(url: string): Promise<ImportedImageDraft[]> {
+  if (!hasTauriRuntime()) {
+    throw new Error("ChatGPT share import is only available in the desktop app.");
+  }
+
+  return invoke<ImportedImageDraft[]>("import_chatgpt_share_images", { url });
+}
+
 export async function loadProjectFromPath(path: string) {
   return invoke<ProjectPersistenceHandle>("load_project_file", { path });
 }

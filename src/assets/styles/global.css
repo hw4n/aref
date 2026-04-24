@@ -424,6 +424,72 @@ button:disabled {
   font-size: 0.9rem;
 }
 
+.workspace-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(6, 8, 11, 0.64);
+}
+
+.workspace-dialog {
+  display: grid;
+  gap: 14px;
+  width: min(480px, 100%);
+  padding: 18px;
+  border: 1px solid var(--border-strong);
+  background: #101419;
+  box-shadow: 0 22px 64px rgba(0, 0, 0, 0.38);
+}
+
+.workspace-dialog__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.workspace-dialog__header h2 {
+  margin: 0;
+  font-size: 0.98rem;
+}
+
+.workspace-dialog__field {
+  display: grid;
+  gap: 6px;
+}
+
+.workspace-dialog__field span {
+  color: var(--text-muted);
+  font-size: 0.76rem;
+}
+
+.workspace-dialog__error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 0.78rem;
+}
+
+.workspace-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.workspace-dialog__action {
+  width: auto;
+  min-width: 92px;
+  display: inline-flex;
+  justify-content: center;
+}
+
+.workspace-dialog__action--primary {
+  border-color: rgba(127, 150, 255, 0.5);
+  background: rgba(127, 150, 255, 0.16);
+}
+
 .canvas-panel {
   position: relative;
   min-height: 0;

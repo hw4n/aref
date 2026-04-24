@@ -12,6 +12,7 @@ pub fn run() {
         .manage(ima2_sidecar::Ima2SidecarRuntimeState::default())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
+            project_persistence::import_chatgpt_share_images,
             project_persistence::ingest_image_asset,
             project_persistence::read_image_bytes,
             project_persistence::load_project_file,

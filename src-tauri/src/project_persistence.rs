@@ -1,11 +1,16 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     io::{Cursor, Read, Write},
     path::{Path, PathBuf},
 };
 
+use crate::image_metadata::image_dimensions_from_bytes;
 use chrono::Utc;
+use reqwest::{
+    header::{ACCEPT, ACCEPT_LANGUAGE, CONTENT_TYPE, COOKIE, REFERER, SET_COOKIE, USER_AGENT},
+    Url,
+};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 use uuid::Uuid;
@@ -23,6 +28,9 @@ const MANAGED_IMPORT_DIRECTORY: &str = "managed-imports";
 const PROJECT_CACHE_DIRECTORY: &str = "opened-projects";
 const PROJECT_ARCHIVE_METADATA_ENTRY: &str = "project.json";
 const PROJECT_ARCHIVE_ASSETS_DIRECTORY: &str = "assets";
+const CHATGPT_SHARE_IMPORT_USER_AGENT: &str =
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
+     (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -45,6 +53,27 @@ pub struct RecentProjectRecord {
 pub struct SaveProjectResult {
     path: String,
     recent_projects: Vec<RecentProjectRecord>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportedChatGptImageDraft {
+    image_path: String,
+    source_name: String,
+    width: u32,
+    height: u32,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChatGptFileDownloadResponse {
+    status: String,
+    download_url: Option<String>,
+    file_name: Option<String>,
+}
+
+struct ChatGptImagePointer {
+    file_id: String,
+    query_pairs: Vec<(String, String)>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -415,6 +444,218 @@ fn managed_import_directory(app: &AppHandle) -> Result<PathBuf, String> {
     let directory = app_local_data_dir(app)?.join(MANAGED_IMPORT_DIRECTORY);
     fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
     Ok(directory)
+}
+
+fn write_managed_import_bytes(
+    app: &AppHandle,
+    filename: &str,
+    bytes: Vec<u8>,
+) -> Result<String, String> {
+    let directory = managed_import_directory(app)?;
+    let extension = Path::new(filename)
+        .extension()
+        .and_then(|value| value.to_str())
+        .and_then(sanitize_extension)
+        .unwrap_or_else(|| "png".to_string());
+    let target_path = directory.join(format!("{}.{}", Uuid::new_v4(), extension));
+
+    fs::write(&target_path, bytes).map_err(|error| error.to_string())?;
+    Ok(normalize_path(&target_path))
+}
+
+fn validate_chatgpt_share_url(url: &Url) -> Result<(), String> {
+    let host = url.host_str().unwrap_or_default();
+
+    if url.scheme() != "https" {
+        return Err("ChatGPT import requires an https share link.".to_string());
+    }
+
+    if host != "chatgpt.com" && host != "chat.openai.com" {
+        return Err("Paste a chatgpt.com/share link.".to_string());
+    }
+
+    if !url.path().starts_with("/share/") {
+        return Err("Paste a ChatGPT shared conversation link.".to_string());
+    }
+
+    Ok(())
+}
+
+fn url_origin(url: &Url) -> String {
+    match url.port() {
+        Some(port) => format!(
+            "{}://{}:{port}",
+            url.scheme(),
+            url.host_str().unwrap_or("chatgpt.com")
+        ),
+        None => format!(
+            "{}://{}",
+            url.scheme(),
+            url.host_str().unwrap_or("chatgpt.com")
+        ),
+    }
+}
+
+fn extract_share_id(url: &Url) -> Option<String> {
+    let mut segments = url.path_segments()?;
+
+    match (segments.next(), segments.next()) {
+        (Some("share"), Some(share_id)) if !share_id.is_empty() => Some(share_id.to_string()),
+        _ => None,
+    }
+}
+
+fn collect_cookie_header(headers: &reqwest::header::HeaderMap) -> String {
+    headers
+        .get_all(SET_COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .filter_map(|value| value.split(';').next())
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| value.trim().to_string())
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+fn is_chatgpt_pointer_character(character: char) -> bool {
+    character.is_ascii_alphanumeric()
+        || matches!(
+            character,
+            ':' | '/' | '?' | '&' | '=' | '_' | '-' | '.' | '%' | '#' | '\\'
+        )
+}
+
+fn decode_chatgpt_pointer(value: &str) -> String {
+    value
+        .trim_end_matches('\\')
+        .replace("\\u0026", "&")
+        .replace("&amp;", "&")
+}
+
+fn extract_chatgpt_image_asset_pointers(html: &str) -> Vec<String> {
+    let marker = "sediment://";
+    let mut pointers = Vec::new();
+    let mut seen = BTreeSet::new();
+    let mut search_start = 0;
+
+    while let Some(relative_start) = html[search_start..].find(marker) {
+        let absolute_start = search_start + relative_start;
+        let mut absolute_end = absolute_start;
+
+        for (offset, character) in html[absolute_start..].char_indices() {
+            if !is_chatgpt_pointer_character(character) {
+                break;
+            }
+
+            absolute_end = absolute_start + offset + character.len_utf8();
+        }
+
+        let pointer = decode_chatgpt_pointer(&html[absolute_start..absolute_end]);
+        if !pointer.is_empty() && seen.insert(pointer.clone()) {
+            pointers.push(pointer);
+        }
+
+        search_start = absolute_end.max(absolute_start + marker.len());
+    }
+
+    pointers
+}
+
+fn parse_query_pairs(query: &str) -> Vec<(String, String)> {
+    if query.trim().is_empty() {
+        return Vec::new();
+    }
+
+    let Ok(url) = Url::parse(&format!("https://chatgpt.local/?{query}")) else {
+        return Vec::new();
+    };
+
+    url.query_pairs()
+        .map(|(key, value)| (key.into_owned(), value.into_owned()))
+        .collect()
+}
+
+fn parse_chatgpt_image_pointer(pointer: &str) -> Option<ChatGptImagePointer> {
+    let body = pointer.strip_prefix("sediment://")?;
+    let (raw_file_id, raw_query) = body.split_once('?').unwrap_or((body, ""));
+    let file_id = raw_file_id.replace('#', "*");
+
+    if file_id.trim().is_empty() {
+        return None;
+    }
+
+    Some(ChatGptImagePointer {
+        file_id,
+        query_pairs: parse_query_pairs(raw_query),
+    })
+}
+
+fn file_name_from_path_like(value: &str) -> Option<String> {
+    let file_name = value
+        .split(['/', '\\'])
+        .filter(|segment| !segment.is_empty())
+        .next_back()?
+        .split('?')
+        .next()
+        .unwrap_or_default()
+        .trim();
+
+    if file_name.is_empty() {
+        None
+    } else {
+        Some(file_name.to_string())
+    }
+}
+
+fn extension_from_content_type(content_type: Option<&str>) -> Option<String> {
+    let extension = match content_type?
+        .split(';')
+        .next()?
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "image/png" => "png",
+        "image/jpeg" => "jpg",
+        "image/webp" => "webp",
+        "image/gif" => "gif",
+        "image/avif" => "avif",
+        "image/bmp" => "bmp",
+        _ => return None,
+    };
+
+    Some(extension.to_string())
+}
+
+fn extension_from_name(value: &str) -> Option<String> {
+    Path::new(value)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .and_then(sanitize_extension)
+}
+
+fn source_name_for_chatgpt_image(
+    file_id: &str,
+    download_file_name: Option<&str>,
+    download_url: &str,
+    content_type: Option<&str>,
+) -> String {
+    if let Some(file_name) = download_file_name.and_then(file_name_from_path_like) {
+        return file_name;
+    }
+
+    if let Some(file_name) = file_name_from_path_like(download_url) {
+        if extension_from_name(&file_name).is_some() {
+            return file_name;
+        }
+    }
+
+    let extension = extension_from_content_type(content_type).unwrap_or_else(|| "png".to_string());
+    format!(
+        "chatgpt-{}.{}",
+        file_id.trim_start_matches("file_"),
+        extension
+    )
 }
 
 fn read_recent_projects_file(app: &AppHandle) -> Result<RecentProjectsFile, String> {
@@ -977,22 +1218,190 @@ fn migrate_project_file(value: serde_json::Value) -> Result<PersistedProjectFile
     }
 }
 
+async fn import_single_chatgpt_image(
+    app: &AppHandle,
+    client: &reqwest::Client,
+    origin: &str,
+    referer: &str,
+    cookie_header: &str,
+    share_id: Option<&str>,
+    pointer: &str,
+) -> Result<ImportedChatGptImageDraft, String> {
+    let image_pointer = parse_chatgpt_image_pointer(pointer)
+        .ok_or_else(|| format!("Invalid ChatGPT image pointer: {pointer}"))?;
+    let endpoint = format!(
+        "{origin}/backend-api/files/download/{}",
+        image_pointer.file_id
+    );
+    let mut download_link_url = Url::parse(&endpoint).map_err(|error| error.to_string())?;
+    let has_shared_conversation_id = image_pointer
+        .query_pairs
+        .iter()
+        .any(|(key, _)| key == "shared_conversation_id");
+
+    {
+        let mut query = download_link_url.query_pairs_mut();
+        for (key, value) in &image_pointer.query_pairs {
+            query.append_pair(key, value);
+        }
+
+        if !has_shared_conversation_id {
+            if let Some(share_id) = share_id {
+                query.append_pair("shared_conversation_id", share_id);
+            }
+        }
+
+        query.append_pair("inline", "false");
+    }
+
+    let mut request = client
+        .get(download_link_url)
+        .header(USER_AGENT, CHATGPT_SHARE_IMPORT_USER_AGENT)
+        .header(ACCEPT, "application/json")
+        .header(REFERER, referer);
+    if !cookie_header.is_empty() {
+        request = request.header(COOKIE, cookie_header);
+    }
+
+    let response = request.send().await.map_err(|error| error.to_string())?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "ChatGPT file link request failed: {}",
+            response.status()
+        ));
+    }
+
+    let download_response = response
+        .json::<ChatGptFileDownloadResponse>()
+        .await
+        .map_err(|error| error.to_string())?;
+    if download_response.status != "success" {
+        return Err(format!(
+            "ChatGPT file is not ready to download: {}",
+            download_response.status
+        ));
+    }
+
+    let download_url = download_response
+        .download_url
+        .ok_or_else(|| "ChatGPT did not return a download URL.".to_string())?;
+    let image_response = client
+        .get(&download_url)
+        .header(USER_AGENT, CHATGPT_SHARE_IMPORT_USER_AGENT)
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
+    if !image_response.status().is_success() {
+        return Err(format!(
+            "ChatGPT image download failed: {}",
+            image_response.status()
+        ));
+    }
+
+    let content_type = image_response
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.to_string());
+    let bytes = image_response
+        .bytes()
+        .await
+        .map_err(|error| error.to_string())?
+        .to_vec();
+    let (width, height) = image_dimensions_from_bytes(&bytes).ok_or_else(|| {
+        format!(
+            "ChatGPT image has an unsupported format: {}",
+            image_pointer.file_id
+        )
+    })?;
+    let source_name = source_name_for_chatgpt_image(
+        &image_pointer.file_id,
+        download_response.file_name.as_deref(),
+        &download_url,
+        content_type.as_deref(),
+    );
+    let image_path = write_managed_import_bytes(app, &source_name, bytes)?;
+
+    Ok(ImportedChatGptImageDraft {
+        image_path,
+        source_name,
+        width,
+        height,
+    })
+}
+
+#[tauri::command]
+pub async fn import_chatgpt_share_images(
+    app: AppHandle,
+    url: String,
+) -> Result<Vec<ImportedChatGptImageDraft>, String> {
+    let parsed_url =
+        Url::parse(url.trim()).map_err(|_| "Paste a valid ChatGPT share URL.".to_string())?;
+    validate_chatgpt_share_url(&parsed_url)?;
+
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::limited(10))
+        .build()
+        .map_err(|error| error.to_string())?;
+    let page_response = client
+        .get(parsed_url.clone())
+        .header(USER_AGENT, CHATGPT_SHARE_IMPORT_USER_AGENT)
+        .header(ACCEPT, "text/html,application/xhtml+xml")
+        .header(ACCEPT_LANGUAGE, "en-US,en;q=0.9")
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
+    if !page_response.status().is_success() {
+        return Err(format!(
+            "ChatGPT share page request failed: {}",
+            page_response.status()
+        ));
+    }
+
+    let final_url = page_response.url().clone();
+    validate_chatgpt_share_url(&final_url)?;
+    let origin = url_origin(&final_url);
+    let referer = final_url.as_str().to_string();
+    let share_id = extract_share_id(&final_url).or_else(|| extract_share_id(&parsed_url));
+    let cookie_header = collect_cookie_header(page_response.headers());
+    let html = page_response
+        .text()
+        .await
+        .map_err(|error| error.to_string())?;
+    let pointers = extract_chatgpt_image_asset_pointers(&html);
+
+    if pointers.is_empty() {
+        return Err(
+            "No ChatGPT generated images were found in that shared conversation.".to_string(),
+        );
+    }
+
+    let mut drafts = Vec::with_capacity(pointers.len());
+    for pointer in pointers {
+        drafts.push(
+            import_single_chatgpt_image(
+                &app,
+                &client,
+                &origin,
+                &referer,
+                &cookie_header,
+                share_id.as_deref(),
+                &pointer,
+            )
+            .await?,
+        );
+    }
+
+    Ok(drafts)
+}
+
 #[tauri::command]
 pub fn ingest_image_asset(
     app: AppHandle,
     filename: String,
     bytes: Vec<u8>,
 ) -> Result<String, String> {
-    let directory = managed_import_directory(&app)?;
-    let extension = Path::new(&filename)
-        .extension()
-        .and_then(|value| value.to_str())
-        .and_then(sanitize_extension)
-        .unwrap_or_else(|| "png".to_string());
-    let target_path = directory.join(format!("{}.{}", Uuid::new_v4(), extension));
-
-    fs::write(&target_path, bytes).map_err(|error| error.to_string())?;
-    Ok(normalize_path(&target_path))
+    write_managed_import_bytes(&app, &filename, bytes)
 }
 
 #[tauri::command]
@@ -1182,6 +1591,38 @@ mod tests {
         );
 
         fs::remove_dir_all(&temp_dir).expect("remove temp dir");
+    }
+
+    #[test]
+    fn extracts_chatgpt_image_asset_pointers_in_order() {
+        let html = r#"\"asset_pointer\",\"sediment://file_a?shared_conversation_id=share-1\",\"size_bytes\",1,
+            \"asset_pointer\",\"sediment://file_b?shared_conversation_id=share-1\",\"size_bytes\",2,
+            \"asset_pointer\",\"sediment://file_a?shared_conversation_id=share-1\",\"size_bytes\",1"#;
+
+        assert_eq!(
+            extract_chatgpt_image_asset_pointers(html),
+            vec![
+                "sediment://file_a?shared_conversation_id=share-1".to_string(),
+                "sediment://file_b?shared_conversation_id=share-1".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn parses_chatgpt_image_pointer_query_pairs() {
+        let pointer = parse_chatgpt_image_pointer(
+            "sediment://file_abc?shared_conversation_id=share-1&foo=bar%20baz",
+        )
+        .expect("pointer should parse");
+
+        assert_eq!(pointer.file_id, "file_abc");
+        assert_eq!(
+            pointer.query_pairs,
+            vec![
+                ("shared_conversation_id".to_string(), "share-1".to_string()),
+                ("foo".to_string(), "bar baz".to_string()),
+            ]
+        );
     }
 
     #[test]

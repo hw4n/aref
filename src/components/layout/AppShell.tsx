@@ -12,6 +12,7 @@ import { ContextualGenerationSheet } from "@/features/ai/components/ContextualGe
 import { shouldShowContextualGenerationSheet } from "@/features/ai/contextual-sheet";
 import { useGenerationHarness } from "@/features/ai/use-generation-harness";
 import { loadImageFiles, loadImagePaths } from "@/features/import/utils/load-image-files";
+import { importChatGptShareImages } from "@/features/project/persistence/project-io";
 import { useProjectPersistence } from "@/features/project/persistence/use-project-persistence";
 import { getProjectDisplayName } from "@/features/project/persistence/project-title";
 import { useWindowImageDrop } from "@/features/import/hooks/use-window-image-drop";
@@ -67,10 +68,14 @@ function clampOverlayWidth(
 export function AppShell() {
   const appShellRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const chatGptUrlInputRef = useRef<HTMLInputElement | null>(null);
   const resizePointerIdRef = useRef<number | null>(null);
   const [resizingPane, setResizingPane] = useState<"inspector" | "generation" | null>(null);
   const [isImporting, setIsImporting] = useState(false);
+  const [isChatGptImporting, setIsChatGptImporting] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
+  const [chatGptImportDialogOpen, setChatGptImportDialogOpen] = useState(false);
+  const [chatGptShareUrl, setChatGptShareUrl] = useState("");
   const importAssets = useAppStore((state) => state.importAssets);
   const projectName = useAppStore((state) => state.project.name);
   const selectionCount = useAppStore((state) => state.project.selection.assetIds.length);
@@ -150,6 +155,58 @@ export function AppShell() {
     inputRef.current?.click();
   }, []);
 
+  const openChatGptImportDialog = useCallback(() => {
+    setChatGptShareUrl("");
+    setImportError(null);
+    setChatGptImportDialogOpen(true);
+  }, []);
+
+  const handleImportFromChatGpt = useCallback(async () => {
+    const shareUrl = chatGptShareUrl.trim();
+
+    if (!shareUrl) {
+      setImportError("Paste a ChatGPT share link.");
+      return;
+    }
+
+    setIsImporting(true);
+    setIsChatGptImporting(true);
+    setImportError(null);
+
+    try {
+      const drafts = await importChatGptShareImages(shareUrl);
+      importAssets(drafts);
+      setChatGptImportDialogOpen(false);
+      setChatGptShareUrl("");
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : "Failed to import images from ChatGPT.");
+    } finally {
+      setIsImporting(false);
+      setIsChatGptImporting(false);
+    }
+  }, [chatGptShareUrl, importAssets]);
+
+  useEffect(() => {
+    if (!chatGptImportDialogOpen) {
+      return;
+    }
+
+    const focusTimer = window.setTimeout(() => {
+      chatGptUrlInputRef.current?.focus();
+    }, 0);
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.code === "Escape" && !isChatGptImporting) {
+        setChatGptImportDialogOpen(false);
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.clearTimeout(focusTimer);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [chatGptImportDialogOpen, isChatGptImporting]);
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (isTypingTarget(event.target)) {
@@ -224,6 +281,11 @@ export function AppShell() {
       label: "Save As",
       onClick: () => void saveProjectAs(),
       disabled: !isDesktopPersistenceAvailable,
+    },
+    {
+      label: isChatGptImporting ? "Importing" : "Import from ChatGPT",
+      onClick: openChatGptImportDialog,
+      disabled: !isDesktopPersistenceAvailable || isImporting,
     },
   ];
 
@@ -404,6 +466,56 @@ export function AppShell() {
           event.currentTarget.value = "";
         }}
       />
+      {chatGptImportDialogOpen ? (
+        <div className="workspace-dialog-backdrop" role="presentation">
+          <form
+            className="workspace-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="chatgpt-import-title"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void handleImportFromChatGpt();
+            }}
+          >
+            <div className="workspace-dialog__header">
+              <h2 id="chatgpt-import-title">Import from ChatGPT</h2>
+            </div>
+            <label className="workspace-dialog__field">
+              <span>Share link</span>
+              <input
+                ref={chatGptUrlInputRef}
+                autoComplete="off"
+                disabled={isChatGptImporting}
+                inputMode="url"
+                placeholder="https://chatgpt.com/share/..."
+                spellCheck={false}
+                type="text"
+                value={chatGptShareUrl}
+                onChange={(event) => setChatGptShareUrl(event.currentTarget.value)}
+              />
+            </label>
+            {importError ? <p className="workspace-dialog__error">{importError}</p> : null}
+            <div className="workspace-dialog__actions">
+              <button
+                className="workspace-dialog__action"
+                disabled={isChatGptImporting}
+                type="button"
+                onClick={() => setChatGptImportDialogOpen(false)}
+              >
+                <span>Cancel</span>
+              </button>
+              <button
+                className="workspace-dialog__action workspace-dialog__action--primary"
+                disabled={isChatGptImporting || chatGptShareUrl.trim().length === 0}
+                type="submit"
+              >
+                <span>{isChatGptImporting ? "Importing" : "Import"}</span>
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
       <main className={workspaceClassName}>
         <header className="workspace__header">
           <div className="workspace__header-left">
