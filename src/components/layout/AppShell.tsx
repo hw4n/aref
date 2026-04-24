@@ -11,7 +11,7 @@ import { ToastViewport } from "@/components/layout/ToastViewport";
 import { ContextualGenerationSheet } from "@/features/ai/components/ContextualGenerationSheet";
 import { shouldShowContextualGenerationSheet } from "@/features/ai/contextual-sheet";
 import { useGenerationHarness } from "@/features/ai/use-generation-harness";
-import { loadImageFiles } from "@/features/import/utils/load-image-files";
+import { loadImageFiles, loadImagePaths } from "@/features/import/utils/load-image-files";
 import { useProjectPersistence } from "@/features/project/persistence/use-project-persistence";
 import { getProjectDisplayName } from "@/features/project/persistence/project-title";
 import { useWindowImageDrop } from "@/features/import/hooks/use-window-image-drop";
@@ -122,7 +122,28 @@ export function AppShell() {
     [importAssets],
   );
 
-  const isDropActive = useWindowImageDrop(handleImportFiles);
+  const handleImportPaths = useCallback(
+    async (paths: string[]) => {
+      if (paths.length === 0) {
+        return;
+      }
+
+      setIsImporting(true);
+      setImportError(null);
+
+      try {
+        const drafts = await loadImagePaths(paths);
+        importAssets(drafts);
+      } catch (error) {
+        setImportError(error instanceof Error ? error.message : "Failed to import dropped image files.");
+      } finally {
+        setIsImporting(false);
+      }
+    },
+    [importAssets],
+  );
+
+  const isDropActive = useWindowImageDrop(handleImportFiles, handleImportPaths);
   useWindowImagePaste(handleImportFiles);
 
   const openImportDialog = useCallback(() => {
