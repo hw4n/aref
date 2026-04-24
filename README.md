@@ -76,9 +76,9 @@ GitHub releases are created by `.github/workflows/release.yml` whenever a semant
 4. Push a tag:
 
 ```bash
-git tag v0.1.14
+git tag v0.1.15
 git push origin main
-git push origin v0.1.14
+git push origin v0.1.15
 ```
 
 The workflow builds Linux, Windows, and macOS installers and uploads them to the matching GitHub Release.
@@ -127,7 +127,7 @@ Manual fallback commands:
 
 ```powershell
 npx --yes @openai/codex@latest login
-npx --yes openai-oauth@1.0.2 --port 10531
+npx --yes openai-oauth@1.0.2 --port 10531 --codex-version 0.124.0
 ```
 
 Manual verification:

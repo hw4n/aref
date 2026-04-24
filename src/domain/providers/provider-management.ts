@@ -90,8 +90,12 @@ export function mapOpenAiOAuthAvailability(options: {
     return createAvailability("auth-required", "Log in", "Use Aref login to create local OAuth credentials.");
   }
 
-  if (snapshot.oauthStatus === "auth_required" || snapshot.codexAuthStatus !== "authed") {
+  if (snapshot.codexAuthStatus !== "authed") {
     return createAvailability("auth-required", "Log in", "Log in to use OAuth.");
+  }
+
+  if (snapshot.oauthStatus === "auth_required") {
+    return createAvailability("auth-required", "Not ready", "Start the OAuth bridge again.");
   }
 
   if (!snapshot.available || snapshot.oauthStatus === "offline") {
@@ -169,6 +173,10 @@ export function shouldPollOAuthSettings(options: {
   }
 
   return snapshot.oauthStatus === "starting" || snapshot.proxyManaged;
+}
+
+export function shouldManualStartOAuthProxy(snapshot: Ima2SidecarSettingsSnapshot) {
+  return snapshot.codexAuthStatus === "authed" && snapshot.oauthStatus !== "node_missing";
 }
 
 export function getResolvedOpenAiAuthMethod(

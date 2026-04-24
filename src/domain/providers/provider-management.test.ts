@@ -7,6 +7,7 @@ import {
   mapOpenAiOAuthAvailability,
   orderProviderAuthMethods,
   shouldAutoStartOAuthProxy,
+  shouldManualStartOAuthProxy,
   shouldPollOAuthSettings,
 } from "./provider-management";
 
@@ -18,6 +19,10 @@ const baseOAuthSnapshot = {
   oauthStatus: "offline" as const,
   codexAuthStatus: "authed" as const,
   models: [],
+  authFilePath: "",
+  proxyLogPath: "",
+  loginLogPath: "",
+  lastProxyError: null,
   proxyManaged: false,
 };
 
@@ -73,6 +78,10 @@ describe("provider management", () => {
           oauthStatus: "auth_required",
           codexAuthStatus: "unauthed",
           models: [],
+          authFilePath: "",
+          proxyLogPath: "",
+          loginLogPath: "",
+          lastProxyError: null,
           proxyManaged: true,
         },
         isDesktop: true,
@@ -91,6 +100,10 @@ describe("provider management", () => {
           oauthStatus: "offline",
           codexAuthStatus: "authed",
           models: [],
+          authFilePath: "",
+          proxyLogPath: "",
+          loginLogPath: "",
+          lastProxyError: null,
           proxyManaged: true,
         },
         isDesktop: true,
@@ -109,6 +122,10 @@ describe("provider management", () => {
           oauthStatus: "offline",
           codexAuthStatus: "unknown",
           models: [],
+          authFilePath: "",
+          proxyLogPath: "",
+          loginLogPath: "",
+          lastProxyError: null,
           proxyManaged: true,
         },
         isDesktop: true,
@@ -127,6 +144,10 @@ describe("provider management", () => {
           oauthStatus: "auth_required",
           codexAuthStatus: "auth_file_missing",
           models: [],
+          authFilePath: "",
+          proxyLogPath: "",
+          loginLogPath: "",
+          lastProxyError: null,
           proxyManaged: true,
         },
         isDesktop: true,
@@ -145,6 +166,10 @@ describe("provider management", () => {
           oauthStatus: "node_missing",
           codexAuthStatus: "authed",
           models: [],
+          authFilePath: "",
+          proxyLogPath: "",
+          loginLogPath: "",
+          lastProxyError: null,
           proxyManaged: false,
         },
         isDesktop: true,
@@ -288,6 +313,32 @@ describe("provider management", () => {
     ).toBe(false);
   });
 
+  it("allows manual Check to start proxy after login succeeds", () => {
+    expect(
+      shouldManualStartOAuthProxy({
+        ...baseOAuthSnapshot,
+        codexAuthStatus: "authed",
+        oauthStatus: "auth_required",
+      }),
+    ).toBe(true);
+
+    expect(
+      shouldManualStartOAuthProxy({
+        ...baseOAuthSnapshot,
+        codexAuthStatus: "authed",
+        oauthStatus: "offline",
+      }),
+    ).toBe(true);
+
+    expect(
+      shouldManualStartOAuthProxy({
+        ...baseOAuthSnapshot,
+        codexAuthStatus: "missing",
+        oauthStatus: "offline",
+      }),
+    ).toBe(false);
+  });
+
   it("keeps OAuth selected while the local OAuth bridge is being prepared", () => {
     const resolvedMethod = getResolvedOpenAiAuthMethod("oauth", {
       oauth: mapOpenAiOAuthAvailability({
@@ -299,6 +350,10 @@ describe("provider management", () => {
           oauthStatus: "offline",
           codexAuthStatus: "authed",
           models: [],
+          authFilePath: "",
+          proxyLogPath: "",
+          loginLogPath: "",
+          lastProxyError: null,
           proxyManaged: true,
         },
         isDesktop: true,
@@ -335,6 +390,10 @@ describe("provider management", () => {
           oauthStatus: "ready",
           codexAuthStatus: "authed",
           models: [],
+          authFilePath: "",
+          proxyLogPath: "",
+          loginLogPath: "",
+          lastProxyError: null,
           proxyManaged: true,
         },
         isDesktop: true,
@@ -373,6 +432,10 @@ describe("provider management", () => {
             oauthStatus: "offline",
             codexAuthStatus: "unknown",
             models: [],
+            authFilePath: "",
+            proxyLogPath: "",
+            loginLogPath: "",
+            lastProxyError: null,
             proxyManaged: false,
           },
           isDesktop: true,

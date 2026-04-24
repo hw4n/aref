@@ -20,6 +20,7 @@ import {
 import {
   isProviderAvailabilitySelectable,
   orderProviderAuthMethods,
+  shouldManualStartOAuthProxy,
 } from "@/domain/providers/provider-management";
 import type {
   Ima2SidecarLoginLaunchSnapshot,
@@ -192,14 +193,10 @@ export function LeftSidebar({
     [],
   );
   const oauthNodeMissing = ima2SidecarSettings.oauthStatus === "node_missing";
-  const oauthNeedsLogin = !oauthNodeMissing
-    && (ima2SidecarSettings.oauthStatus === "auth_required"
-      || ima2SidecarSettings.codexAuthStatus !== "authed");
+  const oauthNeedsLogin = !oauthNodeMissing && ima2SidecarSettings.codexAuthStatus !== "authed";
   const oauthNeedsArefLogin = ima2SidecarSettings.codexAuthStatus === "auth_file_missing";
   const oauthReady = ima2SidecarSettings.oauthStatus === "ready";
-  const oauthCanStartProxy = ima2SidecarSettings.codexAuthStatus === "authed"
-    && !oauthNodeMissing
-    && ima2SidecarSettings.oauthStatus !== "auth_required";
+  const oauthCanStartProxy = shouldManualStartOAuthProxy(ima2SidecarSettings);
   const oauthBusy = ima2SidecarSettingsStatus === "loading"
     || ima2SidecarSettingsStatus === "saving"
     || oauthFlowState === "starting"
@@ -475,11 +472,6 @@ export function LeftSidebar({
   };
 
   const handleStartIma2Proxy = async () => {
-    if (!oauthCanStartProxy) {
-      void reloadIma2SidecarSettings();
-      return;
-    }
-
     if (!oauthCanStartProxy) {
       setOauthFlowState("idle");
       void reloadIma2SidecarSettings();
@@ -766,6 +758,21 @@ export function LeftSidebar({
                             onChange={(event) => setIma2SidecarBaseUrl(event.currentTarget.value)}
                           />
                         </label>
+
+                        <div className="settings-note">
+                          <strong>Auth:</strong> <span>{ima2SidecarSettings.codexAuthStatus}</span>
+                          <strong>Proxy:</strong> <span>{ima2SidecarSettings.oauthStatus}</span>
+                          <strong>Managed:</strong> <span>{ima2SidecarSettings.proxyManaged ? "yes" : "no"}</span>
+                          <strong>Auth file:</strong> <span>{ima2SidecarSettings.authFilePath || "unknown"}</span>
+                          <strong>Proxy log:</strong> <span>{ima2SidecarSettings.proxyLogPath || "unknown"}</span>
+                          <strong>Login log:</strong> <span>{ima2SidecarSettings.loginLogPath || "unknown"}</span>
+                          {ima2SidecarSettings.lastProxyError ? (
+                            <>
+                              <strong>Last error:</strong>
+                              <span>{ima2SidecarSettings.lastProxyError}</span>
+                            </>
+                          ) : null}
+                        </div>
 
                         <div className="settings-actions">
                           <button

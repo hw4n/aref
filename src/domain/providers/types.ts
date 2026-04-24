@@ -106,6 +106,10 @@ export interface Ima2SidecarSettingsSnapshot {
   codexAuthStatus: CodexAuthStatus;
   models: string[];
   proxyManaged: boolean;
+  authFilePath: string;
+  proxyLogPath: string;
+  loginLogPath: string;
+  lastProxyError?: string | null;
 }
 
 export interface Ima2SidecarLoginLaunchSnapshot {

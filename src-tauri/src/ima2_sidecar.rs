@@ -36,6 +36,7 @@ const IMA2_SIDECAR_PROXY_READY_POLL_MILLISECONDS: u64 = 750;
 const CODEX_LOGIN_STATUS_TIMEOUT_MILLISECONDS: u64 = 2_500;
 const HIDDEN_COMMAND_POLL_MILLISECONDS: u64 = 50;
 const OPENAI_OAUTH_PACKAGE: &str = "openai-oauth@1.0.2";
+const OPENAI_OAUTH_FALLBACK_CODEX_VERSION: &str = "0.124.0";
 const OAUTH_IMAGE_DEVELOPER_PROMPT: &str =
     "You are an image generator for a desktop reference-board app. Always use the image_generation tool and do not return a text-only answer. Generate exactly one image that follows the user's prompt and references.";
 
@@ -94,6 +95,10 @@ pub struct Ima2SidecarSettingsSnapshot {
     codex_auth_status: String,
     models: Vec<String>,
     proxy_managed: bool,
+    auth_file_path: String,
+    proxy_log_path: String,
+    login_log_path: String,
+    last_proxy_error: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -839,7 +844,7 @@ fn oauth_status_for_model_probe(codex_auth_status: &str, status: StatusCode) -> 
     }
 }
 
-fn openai_oauth_proxy_args(port: u16, auth_file: &Path) -> Vec<String> {
+fn openai_oauth_proxy_args(port: u16, auth_file: &Path, codex_version: &str) -> Vec<String> {
     vec![
         "--yes".to_string(),
         OPENAI_OAUTH_PACKAGE.to_string(),
@@ -847,7 +852,36 @@ fn openai_oauth_proxy_args(port: u16, auth_file: &Path) -> Vec<String> {
         port.to_string(),
         "--oauth-file".to_string(),
         auth_file.to_string_lossy().to_string(),
+        "--codex-version".to_string(),
+        codex_version.to_string(),
     ]
+}
+
+fn codex_version_from_text(text: &str) -> Option<String> {
+    let marker = "[v";
+    let start = text.find(marker)? + marker.len();
+    let rest = &text[start..];
+    let end = rest.find(']')?;
+    let version = rest[..end].trim();
+
+    if version.chars().all(|character| {
+        character.is_ascii_digit()
+            || character == '.'
+            || character == '-'
+            || character.is_ascii_alphanumeric()
+    }) && version.chars().any(|character| character.is_ascii_digit())
+    {
+        Some(version.to_string())
+    } else {
+        None
+    }
+}
+
+fn resolve_openai_oauth_codex_version(login_log_path: &Path) -> String {
+    fs::read_to_string(login_log_path)
+        .ok()
+        .and_then(|contents| codex_version_from_text(&contents))
+        .unwrap_or_else(|| OPENAI_OAUTH_FALLBACK_CODEX_VERSION.to_string())
 }
 
 fn extract_oauth_model_ids(payload: &Value) -> Vec<String> {
@@ -975,6 +1009,37 @@ fn format_oauth_response_error(context: &str, status: StatusCode, body_text: &st
             status.as_u16()
         ),
     }
+}
+
+fn sanitize_proxy_error(value: &str) -> String {
+    let mut sanitized = value.replace('\r', " ").replace('\n', " ");
+
+    for marker in ["Bearer ", "access_token", "refresh_token", "id_token"] {
+        if sanitized.contains(marker) {
+            sanitized = sanitized.replace(marker, "[redacted]");
+        }
+    }
+
+    sanitized.chars().take(900).collect()
+}
+
+fn proxy_probe_error(base_url: &str, error: &str, proxy_log_path: &Path) -> String {
+    sanitize_proxy_error(&format!(
+        "Proxy is not reachable at {base_url}/v1/models: {error}. See {}.",
+        proxy_log_path.display()
+    ))
+}
+
+fn last_aref_proxy_error_from_log(proxy_log_path: &Path) -> Option<String> {
+    let contents = fs::read_to_string(proxy_log_path).ok()?;
+    contents
+        .lines()
+        .rev()
+        .find_map(|line| {
+            line.split_once("AREF_PROXY_ERROR ")
+                .map(|(_prefix, error)| error)
+        })
+        .map(sanitize_proxy_error)
 }
 
 fn extract_text_fragments(value: &Value, fragments: &mut Vec<String>) {
@@ -1176,6 +1241,9 @@ async fn fetch_ima2_sidecar_snapshot(
     cleanup_managed_proxy(runtime).await?;
 
     let settings = resolve_ima2_sidecar_settings(app)?;
+    let auth_env = aref_codex_auth_env(app)?;
+    let proxy_log_path = ima2_sidecar_proxy_log_path(app)?;
+    let login_log_path = ima2_sidecar_login_log_path(app)?;
     let codex_auth_status = detect_codex_auth_status(app)?;
     let proxy_managed = managed_proxy_matches(runtime, &settings.base_url).await?;
     let client = Client::builder()
@@ -1187,7 +1255,7 @@ async fn fetch_ima2_sidecar_snapshot(
     let unreachable_status =
         || oauth_status_for_missing_proxy(proxy_managed, &codex_auth_status, node_available);
 
-    let (available, oauth_status, models) = match client
+    let (available, oauth_status, models, last_proxy_error) = match client
         .get(format!("{}/v1/models", settings.base_url))
         .send()
         .await
@@ -1195,20 +1263,38 @@ async fn fetch_ima2_sidecar_snapshot(
         Ok(response) => {
             let status = response.status();
             let oauth_status = oauth_status_for_model_probe(&codex_auth_status, status);
+            let body_text = response.text().await.unwrap_or_default();
             let models = if status.is_success() {
-                match response.text().await {
-                    Ok(body_text) => serde_json::from_str::<Value>(&body_text)
-                        .map(|payload| extract_oauth_model_ids(&payload))
-                        .unwrap_or_default(),
-                    Err(_) => Vec::new(),
-                }
+                serde_json::from_str::<Value>(&body_text)
+                    .map(|payload| extract_oauth_model_ids(&payload))
+                    .unwrap_or_default()
             } else {
                 Vec::new()
             };
+            let last_proxy_error = if status.is_success() {
+                None
+            } else {
+                Some(sanitize_proxy_error(&format_oauth_response_error(
+                    "OAuth proxy /v1/models probe",
+                    status,
+                    &body_text,
+                )))
+            };
 
-            (true, oauth_status, models)
+            (true, oauth_status, models, last_proxy_error)
         }
-        Err(_) => (false, unreachable_status(), Vec::new()),
+        Err(error) => (
+            false,
+            unreachable_status(),
+            Vec::new(),
+            last_aref_proxy_error_from_log(&proxy_log_path).or_else(|| {
+                Some(proxy_probe_error(
+                    &settings.base_url,
+                    &error.to_string(),
+                    &proxy_log_path,
+                ))
+            }),
+        ),
     };
 
     Ok(Ima2SidecarSettingsSnapshot {
@@ -1220,6 +1306,10 @@ async fn fetch_ima2_sidecar_snapshot(
         codex_auth_status,
         models,
         proxy_managed,
+        auth_file_path: auth_env.auth_file.to_string_lossy().to_string(),
+        proxy_log_path: proxy_log_path.to_string_lossy().to_string(),
+        login_log_path: login_log_path.to_string_lossy().to_string(),
+        last_proxy_error,
     })
 }
 
@@ -1409,7 +1499,9 @@ async fn start_managed_proxy(
 
     let npx_path = resolve_npx_binary()?;
     let port = parse_proxy_port(&settings.base_url)?;
-    let proxy_args = openai_oauth_proxy_args(port, &auth_env.auth_file);
+    let login_log_path = ima2_sidecar_login_log_path(app)?;
+    let codex_version = resolve_openai_oauth_codex_version(&login_log_path);
+    let proxy_args = openai_oauth_proxy_args(port, &auth_env.auth_file, &codex_version);
     let auth_file_exists = auth_env.auth_file.exists();
     let log_path = ima2_sidecar_proxy_log_path(app)?;
     let mut proxy_log = OpenOptions::new()
@@ -1419,26 +1511,29 @@ async fn start_managed_proxy(
         .map_err(|error| error.to_string())?;
     writeln!(
         proxy_log,
-        "\n{} starting openai-oauth via {} for {} with auth file {} (exists: {}) and CODEX_HOME {}",
+        "\n{} starting openai-oauth via {} for {} with auth file {} (exists: {}), CODEX_HOME {}, codex version {}",
         now_iso_string(),
         npx_path,
         settings.base_url,
         auth_env.auth_file.display(),
         auth_file_exists,
-        auth_env.codex_home.display()
+        auth_env.codex_home.display(),
+        codex_version
     )
     .map_err(|error| error.to_string())?;
     let proxy_stdout = proxy_log.try_clone().map_err(|error| error.to_string())?;
     let proxy_stderr = proxy_log.try_clone().map_err(|error| error.to_string())?;
     let mut proxy_command = hidden_command_with_args(&npx_path, &proxy_args);
     apply_aref_codex_auth_env(&mut proxy_command, &auth_env);
-    let child = proxy_command
+    let child = match proxy_command
         .stdin(Stdio::null())
         .stdout(Stdio::from(proxy_stdout))
         .stderr(Stdio::from(proxy_stderr))
         .spawn()
-        .map_err(|error| {
-            format!(
+    {
+        Ok(child) => child,
+        Err(error) => {
+            let message = format!(
                 "Failed to start openai-oauth via {} for {} with auth file {} (exists: {}) and CODEX_HOME {}. Log: {}. Error: {}",
                 npx_path,
                 settings.base_url,
@@ -1447,8 +1542,16 @@ async fn start_managed_proxy(
                 auth_env.codex_home.display(),
                 log_path.display(),
                 error
-            )
-        })?;
+            );
+            let _ = writeln!(
+                proxy_log,
+                "{} AREF_PROXY_ERROR {}",
+                now_iso_string(),
+                message
+            );
+            return fetch_ima2_sidecar_snapshot(app, runtime).await;
+        }
+    };
 
     runtime.proxy.lock().await.replace(ManagedIma2Proxy {
         child,
@@ -2291,13 +2394,43 @@ mod tests {
     #[test]
     fn starts_proxy_without_forced_model_list() {
         let auth_file = PathBuf::from("C:\\Users\\Aref User\\auth.json");
-        let args = openai_oauth_proxy_args(10531, &auth_file);
+        let args = openai_oauth_proxy_args(10531, &auth_file, "0.124.0");
 
         assert_eq!(args[0], "--yes");
         assert_eq!(args[1], OPENAI_OAUTH_PACKAGE);
         assert!(!args.contains(&"--models".to_string()));
         assert!(args.contains(&"--oauth-file".to_string()));
         assert!(args.contains(&auth_file.to_string_lossy().to_string()));
+        assert!(args.contains(&"--codex-version".to_string()));
+        assert!(args.contains(&"0.124.0".to_string()));
+    }
+
+    #[test]
+    fn extracts_codex_version_from_login_log() {
+        assert_eq!(
+            codex_version_from_text("Welcome to Codex [v0.124.0]\nSuccessfully logged in"),
+            Some("0.124.0".to_string())
+        );
+        assert_eq!(codex_version_from_text("Successfully logged in"), None);
+    }
+
+    #[test]
+    fn reads_last_aref_proxy_error_from_log() {
+        let root = env::temp_dir().join(format!("aref-proxy-log-test-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).expect("log dir");
+        let log_path = root.join("ima2-sidecar-proxy.log");
+        fs::write(
+            &log_path,
+            "noise\n2026 AREF_PROXY_ERROR failed to start proxy\nlater noise\n",
+        )
+        .expect("write proxy log");
+
+        assert_eq!(
+            last_aref_proxy_error_from_log(&log_path),
+            Some("failed to start proxy".to_string())
+        );
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

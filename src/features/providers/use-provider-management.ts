@@ -187,6 +187,7 @@ export function useProviderManagement() {
     ima2SidecarSettings.baseUrl,
     ima2SidecarSettings.codexAuthStatus,
     ima2SidecarSettings.oauthStatus,
+    ima2SidecarSettings.proxyManaged,
     ima2SidecarSettingsStatus,
     isDesktopIma2SidecarAvailable,
     startIma2SidecarProxy,

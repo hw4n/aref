@@ -59,6 +59,10 @@ export function getBrowserIma2SidecarSettingsSnapshot(): Ima2SidecarSettingsSnap
     codexAuthStatus: "unknown",
     models: [],
     proxyManaged: false,
+    authFilePath: "",
+    proxyLogPath: "",
+    loginLogPath: "",
+    lastProxyError: null,
   };
 }
 
