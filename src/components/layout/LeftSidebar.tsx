@@ -190,25 +190,43 @@ export function LeftSidebar({
     () => orderProviderAuthMethods(["oauth", "api-key"]),
     [],
   );
-  const oauthNeedsLogin = ima2SidecarSettings.oauthStatus === "auth_required"
-    || ima2SidecarSettings.codexAuthStatus !== "authed";
+  const oauthNodeMissing = ima2SidecarSettings.oauthStatus === "node_missing";
+  const oauthNeedsLogin = !oauthNodeMissing
+    && (ima2SidecarSettings.oauthStatus === "auth_required"
+      || ima2SidecarSettings.codexAuthStatus !== "authed");
   const oauthNeedsArefLogin = ima2SidecarSettings.codexAuthStatus === "auth_file_missing";
   const oauthReady = ima2SidecarSettings.oauthStatus === "ready";
+  const oauthCanStartProxy = ima2SidecarSettings.codexAuthStatus === "authed"
+    && !oauthNodeMissing
+    && ima2SidecarSettings.oauthStatus !== "auth_required";
   const oauthBusy = ima2SidecarSettingsStatus === "loading"
     || ima2SidecarSettingsStatus === "saving"
     || oauthFlowState === "starting"
     || oauthFlowState === "waiting";
+  const oauthModels = ima2SidecarSettings.models;
+  const oauthModelSummary = oauthModels.length > 0
+    ? `${oauthModels.slice(0, 3).join(", ")}${oauthModels.length > 3 ? ` +${oauthModels.length - 3}` : ""}`
+    : null;
   const oauthStatusTitle = oauthReady
     ? "Ready"
-    : oauthNeedsLogin
+    : oauthNodeMissing
+      ? "Install Node.js"
+      : oauthNeedsLogin
       ? "Log in"
       : "Not ready";
-  let oauthPrimaryActionLabel = oauthNeedsLogin ? "Log in" : "Check";
-  let oauthStatusMessage = oauthNeedsLogin ? "Login required." : "Not ready.";
+  let oauthPrimaryActionLabel = oauthNodeMissing ? "Install Node.js" : oauthNeedsLogin ? "Log in" : "Check";
+  let oauthStatusMessage = oauthNodeMissing
+    ? "Node.js required."
+    : oauthNeedsLogin
+      ? "Login required."
+      : "Not ready.";
 
   if (oauthReady) {
     oauthPrimaryActionLabel = "Ready";
     oauthStatusMessage = "Ready.";
+  } else if (oauthNodeMissing) {
+    oauthPrimaryActionLabel = "Install Node.js";
+    oauthStatusMessage = "Node.js required.";
   } else if (oauthFlowState === "waiting") {
     oauthPrimaryActionLabel = "Checking";
     oauthStatusMessage = "Complete browser login.";
@@ -249,6 +267,7 @@ export function LeftSidebar({
     if (
       oauthFlowState === "waiting"
       && !oauthNeedsLogin
+      && oauthCanStartProxy
       && ima2SidecarSettingsStatus === "idle"
       && !oauthProxyStartRequestedRef.current
     ) {
@@ -302,6 +321,7 @@ export function LeftSidebar({
   }, [
     ima2SidecarSettingsStatus,
     oauthFlowState,
+    oauthCanStartProxy,
     oauthNeedsLogin,
     oauthReady,
     openAiAuthMethod,
@@ -418,6 +438,11 @@ export function LeftSidebar({
   };
 
   const handleStartIma2Proxy = async () => {
+    if (!oauthCanStartProxy) {
+      void reloadIma2SidecarSettings();
+      return;
+    }
+
     const nextSnapshot = await startIma2SidecarProxy();
 
     if (!nextSnapshot) {
@@ -461,6 +486,11 @@ export function LeftSidebar({
 
   const handlePrepareIma2OAuth = async () => {
     if (oauthReady) {
+      void reloadIma2SidecarSettings();
+      return;
+    }
+
+    if (oauthNodeMissing) {
       void reloadIma2SidecarSettings();
       return;
     }
@@ -664,10 +694,11 @@ export function LeftSidebar({
                     <section className="oauth-card">
                       <strong>{oauthStatusTitle}</strong>
                       <p>{oauthStatusMessage}</p>
+                      {oauthReady && oauthModelSummary ? <p>Models: {oauthModelSummary}</p> : null}
 
                       <button
                         className="settings-action settings-action--primary"
-                        disabled={!isDesktopIma2SidecarAvailable || oauthBusy || oauthReady}
+                        disabled={!isDesktopIma2SidecarAvailable || oauthBusy || oauthReady || oauthNodeMissing}
                         onClick={() => void handlePrepareIma2OAuth()}
                       >
                         <SparklesIcon size={14} />
@@ -701,7 +732,11 @@ export function LeftSidebar({
                           </button>
                           <button
                             className="settings-action"
-                            disabled={!isDesktopIma2SidecarAvailable || ima2SidecarSettingsStatus === "saving"}
+                            disabled={
+                              !isDesktopIma2SidecarAvailable
+                              || ima2SidecarSettingsStatus === "saving"
+                              || !oauthCanStartProxy
+                            }
                             onClick={() => void handleStartIma2Proxy()}
                           >
                             <RecentIcon size={14} />

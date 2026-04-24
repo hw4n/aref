@@ -76,9 +76,9 @@ GitHub releases are created by `.github/workflows/release.yml` whenever a semant
 4. Push a tag:
 
 ```bash
-git tag v0.1.12
+git tag v0.1.13
 git push origin main
-git push origin v0.1.12
+git push origin v0.1.13
 ```
 
 The workflow builds Linux, Windows, and macOS installers and uploads them to the matching GitHub Release.
@@ -120,6 +120,8 @@ npm run tauri dev
 The experimental provider uses an Aref-owned Codex OAuth home under the app config directory. Desktop builds can start login and the local `openai-oauth` proxy from the inspector without relying on your global `~/.codex` login.
 
 Windows builds require Node.js 20+ with npm/npx available. Aref checks the local proxy by calling `/v1/models`; auth file presence alone is not treated as ready.
+
+Aref does not start the OAuth proxy until its app-owned `codex-oauth/codex/auth.json` exists. If the app asks you to log in, use the Aref login button so the credentials are written to the Aref-owned Codex home.
 
 Manual fallback commands:
 

@@ -35,8 +35,6 @@ const IMA2_SIDECAR_PROXY_READY_POLL_MILLISECONDS: u64 = 750;
 const CODEX_LOGIN_STATUS_TIMEOUT_MILLISECONDS: u64 = 2_500;
 const HIDDEN_COMMAND_POLL_MILLISECONDS: u64 = 50;
 const OPENAI_OAUTH_PACKAGE: &str = "openai-oauth@1.0.2";
-const IMA2_SIDECAR_PROXY_MODELS: &str =
-    "gpt-5.4,gpt-5.3-codex,gpt-5.3-codex-spark,gpt-5.2,gpt-5.1,gpt-5.1-codex,gpt-5.1-codex-max";
 const OAUTH_IMAGE_DEVELOPER_PROMPT: &str =
     "You are an image generator for a desktop reference-board app. Always use the image_generation tool and do not return a text-only answer. Generate exactly one image that follows the user's prompt and references.";
 
@@ -93,6 +91,7 @@ pub struct Ima2SidecarSettingsSnapshot {
     base_url: String,
     oauth_status: String,
     codex_auth_status: String,
+    models: Vec<String>,
     proxy_managed: bool,
 }
 
@@ -833,11 +832,24 @@ fn openai_oauth_proxy_args(port: u16, auth_file: &Path) -> Vec<String> {
         OPENAI_OAUTH_PACKAGE.to_string(),
         "--port".to_string(),
         port.to_string(),
-        "--models".to_string(),
-        IMA2_SIDECAR_PROXY_MODELS.to_string(),
         "--oauth-file".to_string(),
         auth_file.to_string_lossy().to_string(),
     ]
+}
+
+fn extract_oauth_model_ids(payload: &Value) -> Vec<String> {
+    payload
+        .get("data")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.get("id").and_then(Value::as_str))
+                .filter(|id| !id.trim().is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn build_oauth_request_body(
@@ -924,6 +936,32 @@ fn extract_error_message(value: &Value) -> Option<String> {
                 .and_then(Value::as_str)
                 .map(str::to_string)
         })
+}
+
+fn format_oauth_response_error(context: &str, status: StatusCode, body_text: &str) -> String {
+    let trimmed_body = body_text.trim();
+    let parsed_error = serde_json::from_str::<Value>(body_text)
+        .ok()
+        .and_then(|value| extract_error_message(&value));
+
+    match (parsed_error, trimmed_body.is_empty()) {
+        (Some(message), false) if message.trim() != trimmed_body => format!(
+            "{context} failed ({}): {}. Response body: {}",
+            status.as_u16(),
+            message,
+            trimmed_body
+        ),
+        (Some(message), _) => format!("{context} failed ({}): {}", status.as_u16(), message),
+        (None, false) => format!(
+            "{context} failed ({}). Response body: {}",
+            status.as_u16(),
+            trimmed_body
+        ),
+        (None, true) => format!(
+            "{context} failed ({}) with an empty response body.",
+            status.as_u16()
+        ),
+    }
 }
 
 fn extract_text_fragments(value: &Value, fragments: &mut Vec<String>) {
@@ -1136,16 +1174,28 @@ async fn fetch_ima2_sidecar_snapshot(
     let unreachable_status =
         || oauth_status_for_missing_proxy(proxy_managed, &codex_auth_status, node_available);
 
-    let (available, oauth_status) = match client
+    let (available, oauth_status, models) = match client
         .get(format!("{}/v1/models", settings.base_url))
         .send()
         .await
     {
-        Ok(response) => (
-            true,
-            oauth_status_for_model_probe(&codex_auth_status, response.status()),
-        ),
-        Err(_) => (false, unreachable_status()),
+        Ok(response) => {
+            let status = response.status();
+            let oauth_status = oauth_status_for_model_probe(&codex_auth_status, status);
+            let models = if status.is_success() {
+                match response.text().await {
+                    Ok(body_text) => serde_json::from_str::<Value>(&body_text)
+                        .map(|payload| extract_oauth_model_ids(&payload))
+                        .unwrap_or_default(),
+                    Err(_) => Vec::new(),
+                }
+            } else {
+                Vec::new()
+            };
+
+            (true, oauth_status, models)
+        }
+        Err(_) => (false, unreachable_status(), Vec::new()),
     };
 
     Ok(Ima2SidecarSettingsSnapshot {
@@ -1155,6 +1205,7 @@ async fn fetch_ima2_sidecar_snapshot(
         base_url: settings.base_url,
         oauth_status,
         codex_auth_status,
+        models,
         proxy_managed,
     })
 }
@@ -1285,6 +1336,14 @@ async fn start_managed_proxy(
 ) -> Result<Ima2SidecarSettingsSnapshot, String> {
     cleanup_managed_proxy(runtime).await?;
     let settings = resolve_ima2_sidecar_settings(app)?;
+    let auth_env = aref_codex_auth_env(app)?;
+    ensure_codex_file_credentials_config(&auth_env)?;
+    if !auth_env.auth_file.exists() {
+        return Err(format!(
+            "Aref OAuth auth.json is missing at {}. Click Log in first, then start the bridge.",
+            auth_env.auth_file.display()
+        ));
+    }
 
     if managed_proxy_matches(runtime, &settings.base_url).await? {
         return fetch_ima2_sidecar_snapshot(app, runtime).await;
@@ -1292,8 +1351,6 @@ async fn start_managed_proxy(
 
     stop_managed_proxy(runtime).await?;
 
-    let auth_env = aref_codex_auth_env(app)?;
-    ensure_codex_file_credentials_config(&auth_env)?;
     let npx_path = resolve_npx_binary()?;
     let port = parse_proxy_port(&settings.base_url)?;
     let proxy_args = openai_oauth_proxy_args(port, &auth_env.auth_file);
@@ -1446,14 +1503,10 @@ async fn execute_single_oauth_request(
     let body_text = read_response_text_with_cancel(response, cancel_rx).await?;
 
     if !status.is_success() {
-        let parsed_error = serde_json::from_str::<Value>(&body_text)
-            .ok()
-            .and_then(|value| extract_error_message(&value))
-            .unwrap_or(body_text);
-        return Err(format!(
-            "ChatGPT OAuth request failed ({}): {}",
-            status.as_u16(),
-            parsed_error
+        return Err(format_oauth_response_error(
+            "ChatGPT OAuth request",
+            status,
+            &body_text,
         ));
     }
 
@@ -1488,14 +1541,10 @@ async fn execute_single_oauth_request(
     let fallback_body_text = read_response_text_with_cancel(fallback_response, cancel_rx).await?;
 
     if !fallback_status.is_success() {
-        let parsed_error = serde_json::from_str::<Value>(&fallback_body_text)
-            .ok()
-            .and_then(|value| extract_error_message(&value))
-            .unwrap_or(fallback_body_text);
-        return Err(format!(
-            "ChatGPT OAuth fallback request failed ({}): {}",
-            fallback_status.as_u16(),
-            parsed_error
+        return Err(format_oauth_response_error(
+            "ChatGPT OAuth fallback request",
+            fallback_status,
+            &fallback_body_text,
         ));
     }
 
@@ -2159,15 +2208,44 @@ mod tests {
     }
 
     #[test]
-    fn starts_proxy_with_static_models_to_avoid_startup_discovery_failures() {
+    fn starts_proxy_without_forced_model_list() {
         let auth_file = PathBuf::from("C:\\Users\\Aref User\\auth.json");
         let args = openai_oauth_proxy_args(10531, &auth_file);
 
         assert_eq!(args[0], "--yes");
         assert_eq!(args[1], OPENAI_OAUTH_PACKAGE);
-        assert!(args.contains(&"--models".to_string()));
-        assert!(args.contains(&IMA2_SIDECAR_PROXY_MODELS.to_string()));
+        assert!(!args.contains(&"--models".to_string()));
         assert!(args.contains(&"--oauth-file".to_string()));
         assert!(args.contains(&auth_file.to_string_lossy().to_string()));
+    }
+
+    #[test]
+    fn extracts_model_ids_from_proxy_models_payload() {
+        let payload = json!({
+            "object": "list",
+            "data": [
+                { "id": "gpt-5.2" },
+                { "id": "gpt-5.1-codex" },
+                { "object": "model" }
+            ]
+        });
+
+        assert_eq!(
+            extract_oauth_model_ids(&payload),
+            vec!["gpt-5.2".to_string(), "gpt-5.1-codex".to_string()]
+        );
+    }
+
+    #[test]
+    fn preserves_proxy_error_response_body() {
+        let error = format_oauth_response_error(
+            "ChatGPT OAuth request",
+            StatusCode::BAD_REQUEST,
+            r#"{"error":{"message":"model unavailable","code":"bad_model"}}"#,
+        );
+
+        assert!(error.contains("model unavailable"));
+        assert!(error.contains("Response body:"));
+        assert!(error.contains("bad_model"));
     }
 }

@@ -104,6 +104,7 @@ export interface Ima2SidecarSettingsSnapshot {
   baseUrl: string;
   oauthStatus: Ima2SidecarOAuthStatus;
   codexAuthStatus: CodexAuthStatus;
+  models: string[];
   proxyManaged: boolean;
 }
 

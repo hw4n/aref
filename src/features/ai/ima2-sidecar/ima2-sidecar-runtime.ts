@@ -56,6 +56,7 @@ export function getBrowserIma2SidecarSettingsSnapshot(): Ima2SidecarSettingsSnap
     baseUrl: DEFAULT_IMA2_SIDECAR_BASE_URL,
     oauthStatus: "offline",
     codexAuthStatus: "unknown",
+    models: [],
     proxyManaged: false,
   };
 }

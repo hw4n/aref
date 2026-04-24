@@ -165,6 +165,23 @@ export function useProviderManagement() {
       return;
     }
 
+    if (
+      ima2SidecarSettings.oauthStatus === "node_missing"
+      || ima2SidecarSettings.oauthStatus === "auth_required"
+      || ima2SidecarSettings.codexAuthStatus !== "authed"
+    ) {
+      oauthAutoStartSignatureRef.current = null;
+      return;
+    }
+
+    if (
+      ima2SidecarSettings.oauthStatus !== "offline"
+      && ima2SidecarSettings.oauthStatus !== "starting"
+      && ima2SidecarSettings.oauthStatus !== "unknown"
+    ) {
+      return;
+    }
+
     const signature = [
       ima2SidecarSettings.baseUrl,
       ima2SidecarSettings.oauthStatus,
