@@ -31,6 +31,8 @@ const IMA2_SIDECAR_HEALTH_TIMEOUT_SECONDS: u64 = 3;
 const IMA2_SIDECAR_PROXY_WARMUP_MILLISECONDS: u64 = 900;
 const IMA2_SIDECAR_PROXY_READY_TIMEOUT_MILLISECONDS: u64 = 12_000;
 const IMA2_SIDECAR_PROXY_READY_POLL_MILLISECONDS: u64 = 750;
+const IMA2_SIDECAR_PROXY_MODELS: &str =
+    "gpt-5.4,gpt-5.3-codex,gpt-5.3-codex-spark,gpt-5.2,gpt-5.1,gpt-5.1-codex,gpt-5.1-codex-max";
 const CODEX_STATUS_TIMEOUT_MILLISECONDS: u64 = 2_000;
 const OAUTH_IMAGE_DEVELOPER_PROMPT: &str =
     "You are an image generator for a desktop reference-board app. Always use the image_generation tool and do not return a text-only answer. Generate exactly one image that follows the user's prompt and references.";
@@ -504,6 +506,41 @@ fn detect_codex_auth_status() -> String {
     "unknown".to_string()
 }
 
+fn is_codex_auth_ready(status: &str) -> bool {
+    status == "authed"
+}
+
+fn oauth_status_for_unreachable_proxy(proxy_managed: bool, codex_auth_status: &str) -> String {
+    if !is_codex_auth_ready(codex_auth_status) {
+        return "auth_required".to_string();
+    }
+
+    if proxy_managed {
+        "starting".to_string()
+    } else {
+        "offline".to_string()
+    }
+}
+
+fn oauth_status_for_ready_proxy(codex_auth_status: &str) -> String {
+    if is_codex_auth_ready(codex_auth_status) {
+        "ready".to_string()
+    } else {
+        "auth_required".to_string()
+    }
+}
+
+fn openai_oauth_proxy_args(port: u16) -> Vec<String> {
+    vec![
+        "--yes".to_string(),
+        "openai-oauth@latest".to_string(),
+        "--port".to_string(),
+        port.to_string(),
+        "--models".to_string(),
+        IMA2_SIDECAR_PROXY_MODELS.to_string(),
+    ]
+}
+
 fn build_oauth_request_body(
     request: &StartIma2SidecarGenerationRequest,
     prompt: &str,
@@ -796,15 +833,38 @@ async fn fetch_ima2_sidecar_snapshot(
         .build()
         .map_err(|error| error.to_string())?;
 
+    let unreachable_status =
+        || oauth_status_for_unreachable_proxy(proxy_managed, &codex_auth_status);
+    let model_probe_status = |status: StatusCode| {
+        if status.is_success() {
+            oauth_status_for_ready_proxy(&codex_auth_status)
+        } else if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
+            "auth_required".to_string()
+        } else {
+            "unknown".to_string()
+        }
+    };
+
     let (available, oauth_status) = match client
-        .get(format!("{}/v1/models", settings.base_url))
+        .get(format!("{}/health", settings.base_url))
         .send()
         .await
     {
         Ok(response) => (
             true,
             if response.status().is_success() {
-                "ready".to_string()
+                oauth_status_for_ready_proxy(&codex_auth_status)
+            } else if response.status() == StatusCode::NOT_FOUND
+                || response.status() == StatusCode::METHOD_NOT_ALLOWED
+            {
+                match client
+                    .get(format!("{}/v1/models", settings.base_url))
+                    .send()
+                    .await
+                {
+                    Ok(model_response) => model_probe_status(model_response.status()),
+                    Err(_) => unreachable_status(),
+                }
             } else if response.status() == StatusCode::UNAUTHORIZED
                 || response.status() == StatusCode::FORBIDDEN
             {
@@ -813,8 +873,7 @@ async fn fetch_ima2_sidecar_snapshot(
                 "unknown".to_string()
             },
         ),
-        Err(_) if proxy_managed => (false, "starting".to_string()),
-        Err(_) => (false, "offline".to_string()),
+        Err(_) => (false, unreachable_status()),
     };
 
     Ok(Ima2SidecarSettingsSnapshot {
@@ -849,7 +908,7 @@ fn launch_codex_login_process() -> Result<(), String> {
         }
     }
 
-    try_spawn_process(npx_binary(), &["--yes", "@openai/codex", "login"])
+    try_spawn_process(npx_binary(), &["--yes", "@openai/codex@latest", "login"])
 }
 
 async fn start_managed_proxy(
@@ -859,6 +918,10 @@ async fn start_managed_proxy(
     cleanup_managed_proxy(runtime).await?;
     let settings = resolve_ima2_sidecar_settings(app)?;
 
+    if !is_codex_auth_ready(&detect_codex_auth_status()) {
+        return fetch_ima2_sidecar_snapshot(app, runtime).await;
+    }
+
     if managed_proxy_matches(runtime, &settings.base_url).await? {
         return fetch_ima2_sidecar_snapshot(app, runtime).await;
     }
@@ -866,8 +929,9 @@ async fn start_managed_proxy(
     stop_managed_proxy(runtime).await?;
 
     let port = parse_proxy_port(&settings.base_url)?;
+    let proxy_args = openai_oauth_proxy_args(port);
     let child = hidden_command(npx_binary())
-        .args(["--yes", "openai-oauth", "--port", &port.to_string()])
+        .args(proxy_args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -1500,5 +1564,35 @@ mod tests {
         assert_eq!(aspect_ratio_to_ima2_size("3:4"), ("1024x1536", 1024, 1536));
         assert_eq!(aspect_ratio_to_ima2_size("16:9"), ("1792x1024", 1792, 1024));
         assert_eq!(aspect_ratio_to_ima2_size("9:16"), ("1024x1792", 1024, 1792));
+    }
+
+    #[test]
+    fn maps_missing_auth_to_login_needed_before_retrying_proxy() {
+        assert_eq!(
+            oauth_status_for_unreachable_proxy(false, "missing"),
+            "auth_required"
+        );
+        assert_eq!(
+            oauth_status_for_unreachable_proxy(false, "unknown"),
+            "auth_required"
+        );
+        assert_eq!(
+            oauth_status_for_unreachable_proxy(true, "authed"),
+            "starting"
+        );
+        assert_eq!(
+            oauth_status_for_unreachable_proxy(false, "authed"),
+            "offline"
+        );
+    }
+
+    #[test]
+    fn starts_proxy_with_static_models_to_avoid_startup_discovery_failures() {
+        let args = openai_oauth_proxy_args(10531);
+
+        assert_eq!(args[0], "--yes");
+        assert_eq!(args[1], "openai-oauth@latest");
+        assert!(args.contains(&"--models".to_string()));
+        assert!(args.contains(&IMA2_SIDECAR_PROXY_MODELS.to_string()));
     }
 }
