@@ -1,5 +1,5 @@
 import type {
-  GenerationAspectRatio,
+  GenerationImageSize,
   GenerationImageQuality,
   GenerationModeration,
 } from "@/domain/jobs/types";
@@ -13,7 +13,7 @@ export interface GenerationSheetDraft {
   model: string;
   settings: {
     imageCount: number;
-    aspectRatio: GenerationAspectRatio;
+    size: GenerationImageSize;
     quality: GenerationImageQuality;
     moderation: GenerationModeration;
   };

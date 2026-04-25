@@ -145,7 +145,10 @@ pub struct StartIma2SidecarGenerationRequest {
 #[serde(rename_all = "camelCase")]
 pub struct Ima2SidecarGenerationSettings {
     image_count: u32,
-    aspect_ratio: String,
+    #[serde(default = "default_generation_size")]
+    size: String,
+    #[serde(default)]
+    aspect_ratio: Option<String>,
     quality: Option<String>,
     moderation: Option<String>,
 }
@@ -345,13 +348,44 @@ fn compose_prompt(prompt: &str, negative_prompt: Option<&str>) -> String {
     }
 }
 
-fn aspect_ratio_to_ima2_size(aspect_ratio: &str) -> (&'static str, u32, u32) {
+fn default_generation_size() -> String {
+    "auto".to_string()
+}
+
+fn legacy_aspect_ratio_to_size(aspect_ratio: &str) -> Option<&'static str> {
     match aspect_ratio {
-        "unspecified" => ("auto", 1024, 1024),
-        "4:3" => ("1536x1024", 1536, 1024),
-        "3:4" => ("1024x1536", 1024, 1536),
-        "16:9" => ("1792x1024", 1792, 1024),
-        "9:16" => ("1024x1792", 1024, 1792),
+        "unspecified" => Some("auto"),
+        "1:1" => Some("1024x1024"),
+        "4:3" => Some("1536x1024"),
+        "3:4" => Some("1024x1536"),
+        "16:9" => Some("2048x1152"),
+        "9:16" => Some("2160x3840"),
+        _ => None,
+    }
+}
+
+fn normalized_generation_size(settings: &Ima2SidecarGenerationSettings) -> String {
+    if settings.size != "auto" {
+        return settings.size.clone();
+    }
+
+    settings
+        .aspect_ratio
+        .as_deref()
+        .and_then(legacy_aspect_ratio_to_size)
+        .unwrap_or("auto")
+        .to_string()
+}
+
+fn generation_size_to_ima2_size(size: &str) -> (&'static str, u32, u32) {
+    match size {
+        "auto" => ("auto", 1024, 1024),
+        "1536x1024" => ("1536x1024", 1536, 1024),
+        "1024x1536" => ("1024x1536", 1024, 1536),
+        "2048x2048" => ("2048x2048", 2048, 2048),
+        "2048x1152" => ("2048x1152", 2048, 1152),
+        "3840x2160" => ("3840x2160", 3840, 2160),
+        "2160x3840" => ("2160x3840", 2160, 3840),
         _ => ("1024x1024", 1024, 1024),
     }
 }
@@ -876,7 +910,8 @@ fn normalize_oauth_image_quality(value: Option<&str>) -> &'static str {
         Some("low") => "low",
         Some("high") => "high",
         Some("medium") => "medium",
-        _ => "medium",
+        Some("auto") => "auto",
+        _ => "auto",
     }
 }
 
@@ -1772,7 +1807,8 @@ async fn execute_ima2_sidecar_request(
         .timeout(Duration::from_secs(IMA2_SIDECAR_REQUEST_TIMEOUT_SECONDS))
         .build()
         .map_err(|error| error.to_string())?;
-    let (size, width, height) = aspect_ratio_to_ima2_size(&request.settings.aspect_ratio);
+    let normalized_size = normalized_generation_size(&request.settings);
+    let (size, width, height) = generation_size_to_ima2_size(&normalized_size);
     let prompt = compose_prompt(&request.prompt, request.negative_prompt.as_deref());
     let output_directory = ima2_sidecar_generated_directory(app)?;
     let image_count = normalize_oauth_image_count(request.settings.image_count);
@@ -2226,16 +2262,49 @@ mod tests {
     }
 
     #[test]
-    fn maps_canvas_aspect_ratios_to_oauth_proxy_sizes() {
+    fn maps_generation_sizes_to_oauth_proxy_sizes() {
+        assert_eq!(generation_size_to_ima2_size("auto"), ("auto", 1024, 1024));
         assert_eq!(
-            aspect_ratio_to_ima2_size("unspecified"),
-            ("auto", 1024, 1024)
+            generation_size_to_ima2_size("1024x1024"),
+            ("1024x1024", 1024, 1024)
         );
-        assert_eq!(aspect_ratio_to_ima2_size("1:1"), ("1024x1024", 1024, 1024));
-        assert_eq!(aspect_ratio_to_ima2_size("4:3"), ("1536x1024", 1536, 1024));
-        assert_eq!(aspect_ratio_to_ima2_size("3:4"), ("1024x1536", 1024, 1536));
-        assert_eq!(aspect_ratio_to_ima2_size("16:9"), ("1792x1024", 1792, 1024));
-        assert_eq!(aspect_ratio_to_ima2_size("9:16"), ("1024x1792", 1024, 1792));
+        assert_eq!(
+            generation_size_to_ima2_size("1536x1024"),
+            ("1536x1024", 1536, 1024)
+        );
+        assert_eq!(
+            generation_size_to_ima2_size("1024x1536"),
+            ("1024x1536", 1024, 1536)
+        );
+        assert_eq!(
+            generation_size_to_ima2_size("2048x2048"),
+            ("2048x2048", 2048, 2048)
+        );
+        assert_eq!(
+            generation_size_to_ima2_size("2048x1152"),
+            ("2048x1152", 2048, 1152)
+        );
+        assert_eq!(
+            generation_size_to_ima2_size("3840x2160"),
+            ("3840x2160", 3840, 2160)
+        );
+        assert_eq!(
+            generation_size_to_ima2_size("2160x3840"),
+            ("2160x3840", 2160, 3840)
+        );
+    }
+
+    #[test]
+    fn maps_legacy_aspect_ratio_to_size() {
+        let settings = Ima2SidecarGenerationSettings {
+            image_count: 1,
+            size: "auto".to_string(),
+            aspect_ratio: Some("9:16".to_string()),
+            quality: None,
+            moderation: None,
+        };
+
+        assert_eq!(normalized_generation_size(&settings), "2160x3840");
     }
 
     #[test]
@@ -2528,7 +2597,8 @@ mod tests {
             negative_prompt: None,
             settings: Ima2SidecarGenerationSettings {
                 image_count: 2,
-                aspect_ratio: "1:1".to_string(),
+                size: "1024x1024".to_string(),
+                aspect_ratio: None,
                 quality: Some("high".to_string()),
                 moderation: Some("auto".to_string()),
             },
@@ -2554,7 +2624,8 @@ mod tests {
             negative_prompt: None,
             settings: Ima2SidecarGenerationSettings {
                 image_count: 1,
-                aspect_ratio: "4:3".to_string(),
+                size: "1536x1024".to_string(),
+                aspect_ratio: None,
                 quality: Some("unknown".to_string()),
                 moderation: Some("unknown".to_string()),
             },
@@ -2571,7 +2642,7 @@ mod tests {
         assert_eq!(body["tool_choice"], "required");
         assert_eq!(body["tools"].as_array().expect("tools array").len(), 1);
         assert_eq!(body["tools"][0]["type"], "image_generation");
-        assert_eq!(body["tools"][0]["quality"], "medium");
+        assert_eq!(body["tools"][0]["quality"], "auto");
         assert_eq!(body["tools"][0]["moderation"], "low");
     }
 

@@ -248,11 +248,88 @@ pub struct RuntimeGenerationRequest {
     settings: RuntimeGenerationSettings,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeGenerationSettings {
     image_count: u32,
-    aspect_ratio: String,
+    size: String,
+    quality: String,
+    moderation: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawRuntimeGenerationSettings {
+    #[serde(default = "default_runtime_image_count")]
+    image_count: u32,
+    size: Option<String>,
+    aspect_ratio: Option<String>,
+    quality: Option<String>,
+    moderation: Option<String>,
+}
+
+fn default_runtime_image_count() -> u32 {
+    1
+}
+
+fn legacy_aspect_ratio_to_size(aspect_ratio: &str) -> Option<&'static str> {
+    match aspect_ratio {
+        "unspecified" => Some("auto"),
+        "1:1" => Some("1024x1024"),
+        "4:3" => Some("1536x1024"),
+        "3:4" => Some("1024x1536"),
+        "16:9" => Some("2048x1152"),
+        "9:16" => Some("2160x3840"),
+        _ => None,
+    }
+}
+
+fn normalize_runtime_generation_size(size: Option<String>, aspect_ratio: Option<String>) -> String {
+    match size.as_deref() {
+        Some("auto")
+        | Some("1024x1024")
+        | Some("1536x1024")
+        | Some("1024x1536")
+        | Some("2048x2048")
+        | Some("2048x1152")
+        | Some("3840x2160")
+        | Some("2160x3840") => size.unwrap(),
+        _ => aspect_ratio
+            .as_deref()
+            .and_then(legacy_aspect_ratio_to_size)
+            .unwrap_or("auto")
+            .to_string(),
+    }
+}
+
+fn normalize_runtime_generation_quality(quality: Option<String>) -> String {
+    match quality.as_deref() {
+        Some("auto") | Some("low") | Some("medium") | Some("high") => quality.unwrap(),
+        _ => "auto".to_string(),
+    }
+}
+
+fn normalize_runtime_generation_moderation(moderation: Option<String>) -> String {
+    match moderation.as_deref() {
+        Some("auto") | Some("low") => moderation.unwrap(),
+        _ => "low".to_string(),
+    }
+}
+
+impl<'de> Deserialize<'de> for RuntimeGenerationSettings {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = RawRuntimeGenerationSettings::deserialize(deserializer)?;
+
+        Ok(Self {
+            image_count: raw.image_count.clamp(1, 4),
+            size: normalize_runtime_generation_size(raw.size, raw.aspect_ratio),
+            quality: normalize_runtime_generation_quality(raw.quality),
+            moderation: normalize_runtime_generation_moderation(raw.moderation),
+        })
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1648,6 +1725,21 @@ mod tests {
                 ("foo".to_string(), "bar baz".to_string()),
             ]
         );
+    }
+
+    #[test]
+    fn migrates_legacy_generation_aspect_ratio_to_size() {
+        let settings = serde_json::from_value::<RuntimeGenerationSettings>(json!({
+            "imageCount": 1,
+            "aspectRatio": "16:9",
+            "quality": "medium",
+            "moderation": "auto"
+        }))
+        .expect("legacy settings should deserialize");
+
+        assert_eq!(settings.size, "2048x1152");
+        assert_eq!(settings.quality, "medium");
+        assert_eq!(settings.moderation, "auto");
     }
 
     #[test]

@@ -27,7 +27,7 @@ export interface StartIma2SidecarGenerationInput {
   negativePrompt?: string;
   settings: {
     imageCount: number;
-    aspectRatio: string;
+    size: string;
     quality: GenerationImageQuality;
     moderation: GenerationModeration;
   };

@@ -17,7 +17,7 @@ import {
 } from "@/components/icons/ui-icons";
 import type { AssetItem } from "@/domain/assets/types";
 import type {
-  GenerationAspectRatio,
+  GenerationImageSize,
   GenerationImageQuality,
   GenerationModeration,
   GenerationRequest,
@@ -27,33 +27,50 @@ import { AssetThumbnail } from "@/features/images/components/AssetThumbnail";
 import { useAppStore } from "@/state/app-store";
 import { selectSelectedAssets, selectSelectedGroups } from "@/state/selectors/canvas-selectors";
 
-const ASPECT_RATIO_OPTIONS: GenerationAspectRatio[] = ["unspecified", "1:1", "4:3", "3:4", "16:9", "9:16"];
-const QUALITY_OPTIONS: GenerationImageQuality[] = ["low", "medium", "high"];
+const SIZE_OPTIONS: GenerationImageSize[] = [
+  "1024x1024",
+  "1536x1024",
+  "1024x1536",
+  "2048x2048",
+  "2048x1152",
+  "3840x2160",
+  "2160x3840",
+  "auto",
+];
+const QUALITY_OPTIONS: GenerationImageQuality[] = ["low", "medium", "high", "auto"];
 const MODERATION_OPTIONS: GenerationModeration[] = ["low", "auto"];
 const COUNT_OPTIONS = [1, 2, 4];
 
-function getAspectRatioLabel(aspectRatio: GenerationAspectRatio) {
-  if (aspectRatio === "unspecified") {
-    return "Unspecified";
+function getSizeLabel(size: GenerationImageSize) {
+  if (size === "auto") {
+    return "Auto (Default)";
   }
 
-  if (aspectRatio === "1:1") {
-    return "1:1 (Square)";
+  if (size === "1024x1024") {
+    return "1024 x 1024 (Square)";
   }
 
-  if (aspectRatio === "4:3") {
-    return "4:3";
+  if (size === "1536x1024") {
+    return "1536 x 1024 (Landscape)";
   }
 
-  if (aspectRatio === "3:4") {
-    return "3:4";
+  if (size === "1024x1536") {
+    return "1024 x 1536 (Portrait)";
   }
 
-  if (aspectRatio === "16:9") {
-    return "16:9";
+  if (size === "2048x2048") {
+    return "2048 x 2048 (2K Square)";
   }
 
-  return "9:16";
+  if (size === "2048x1152") {
+    return "2048 x 1152 (2K Landscape)";
+  }
+
+  if (size === "3840x2160") {
+    return "3840 x 2160 (4K Landscape)";
+  }
+
+  return "2160 x 3840 (4K Portrait)";
 }
 
 interface ContextualGenerationSheetProps {
@@ -350,20 +367,20 @@ export function ContextualGenerationSheet({
             </label>
 
             <label className="inspector-panel__field inspector-panel__field--span">
-              <span>Aspect</span>
+              <span>Size</span>
               <select
-                value={generationDraft.settings.aspectRatio}
+                value={generationDraft.settings.size}
                 onChange={(event) =>
                   setGenerationDraft({
                     settings: {
-                      aspectRatio: event.currentTarget.value as GenerationAspectRatio,
+                      size: event.currentTarget.value as GenerationImageSize,
                     },
                   })
                 }
               >
-                {ASPECT_RATIO_OPTIONS.map((aspectRatio) => (
-                  <option key={aspectRatio} value={aspectRatio}>
-                    {getAspectRatioLabel(aspectRatio)}
+                {SIZE_OPTIONS.map((size) => (
+                  <option key={size} value={size}>
+                    {getSizeLabel(size)}
                   </option>
                 ))}
               </select>

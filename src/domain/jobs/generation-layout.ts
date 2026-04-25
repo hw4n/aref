@@ -2,7 +2,7 @@ import { screenToWorld } from "@/domain/camera/camera-math";
 import type { CameraState } from "@/domain/camera/types";
 import type { Point } from "@/domain/shared/types";
 
-import type { GenerationAspectRatio } from "./types";
+import type { GenerationImageSize } from "./types";
 
 const GENERATED_TARGET_MAX_DIMENSION = 360;
 const GENERATED_SPACING = 40;
@@ -12,21 +12,29 @@ export function computeGeneratedScale(width: number, height: number) {
   return Math.min(1, GENERATED_TARGET_MAX_DIMENSION / maxDimension);
 }
 
-export function getGenerationAspectSourceSize(aspectRatio: GenerationAspectRatio) {
-  if (aspectRatio === "4:3") {
+export function getGenerationSourceSize(size: GenerationImageSize) {
+  if (size === "1536x1024") {
     return { width: 1536, height: 1024 };
   }
 
-  if (aspectRatio === "3:4") {
+  if (size === "1024x1536") {
     return { width: 1024, height: 1536 };
   }
 
-  if (aspectRatio === "16:9") {
-    return { width: 1792, height: 1024 };
+  if (size === "2048x2048") {
+    return { width: 2048, height: 2048 };
   }
 
-  if (aspectRatio === "9:16") {
-    return { width: 1024, height: 1792 };
+  if (size === "2048x1152") {
+    return { width: 2048, height: 1152 };
+  }
+
+  if (size === "3840x2160") {
+    return { width: 3840, height: 2160 };
+  }
+
+  if (size === "2160x3840") {
+    return { width: 2160, height: 3840 };
   }
 
   return { width: 1024, height: 1024 };
@@ -41,8 +49,8 @@ export function getGenerationDisplaySize(width: number, height: number) {
   };
 }
 
-export function getGenerationDisplaySizeForAspectRatio(aspectRatio: GenerationAspectRatio) {
-  const sourceSize = getGenerationAspectSourceSize(aspectRatio);
+export function getGenerationDisplaySizeForSize(size: GenerationImageSize) {
+  const sourceSize = getGenerationSourceSize(size);
   return getGenerationDisplaySize(sourceSize.width, sourceSize.height);
 }
 

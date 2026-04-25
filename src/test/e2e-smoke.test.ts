@@ -39,7 +39,7 @@ describe("release smoke flow", () => {
       model: "mock-canvas-v1",
       settings: {
         imageCount: 1,
-        aspectRatio: "1:1" as const,
+        size: "1024x1024" as const,
         quality: "medium" as const,
         moderation: "low" as const,
       },

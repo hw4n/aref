@@ -21,7 +21,7 @@ import type { AssetItem } from "@/domain/assets/types";
 import { screenToWorld } from "@/domain/camera/camera-math";
 import {
   computeGenerationCanvasLayout,
-  getGenerationDisplaySizeForAspectRatio,
+  getGenerationDisplaySizeForSize,
 } from "@/domain/jobs/generation-layout";
 import type { GenerationJob } from "@/domain/jobs/types";
 import { normalizeRect, rectsIntersect } from "@/domain/shared/geometry";
@@ -224,7 +224,7 @@ function GenerationJobPlaceholderItem({
 }) {
   const statusLabel = job.status === "queued" ? "Queued" : "Generating";
   const statusStroke = job.status === "queued" ? "rgba(255, 199, 92, 0.7)" : "rgba(127, 150, 255, 0.82)";
-  const displaySize = getGenerationDisplaySizeForAspectRatio(job.request.settings.aspectRatio);
+  const displaySize = getGenerationDisplaySizeForSize(job.request.settings.size);
   const frames = Array.from({ length: job.request.settings.imageCount }, () => ({
     width: displaySize.width,
     height: displaySize.height,

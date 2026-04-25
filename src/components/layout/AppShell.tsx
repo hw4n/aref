@@ -19,6 +19,7 @@ import { useWindowImageDrop } from "@/features/import/hooks/use-window-image-dro
 import { useWindowImagePaste } from "@/features/import/hooks/use-window-image-paste";
 import { CanvasStage } from "@/features/canvas/adapters/react-konva/CanvasStage";
 import { useProviderManagement } from "@/features/providers/use-provider-management";
+import { useGenerationDraftPersistence } from "@/features/settings/use-generation-draft-persistence";
 import { useUiPreferencesPersistence } from "@/features/settings/use-ui-preferences-persistence";
 import { useAppStore } from "@/state/app-store";
 
@@ -92,6 +93,7 @@ export function AppShell() {
   const setGenerationSheetWidth = useAppStore((state) => state.setGenerationSheetWidth);
   const pushToast = useAppStore((state) => state.pushToast);
   useUiPreferencesPersistence();
+  useGenerationDraftPersistence();
   const {
     createNewProject,
     currentProjectPath,

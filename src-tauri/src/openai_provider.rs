@@ -101,7 +101,12 @@ pub struct StartOpenAiGenerationRequest {
 #[serde(rename_all = "camelCase")]
 pub struct OpenAiGenerationSettings {
     image_count: u32,
-    aspect_ratio: String,
+    #[serde(default = "default_generation_size")]
+    size: String,
+    #[serde(default)]
+    aspect_ratio: Option<String>,
+    #[serde(default)]
+    quality: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -333,14 +338,55 @@ fn compose_prompt(prompt: &str, negative_prompt: Option<&str>) -> String {
     }
 }
 
-fn aspect_ratio_to_openai_size(aspect_ratio: &str) -> (&'static str, u32, u32) {
+fn default_generation_size() -> String {
+    "auto".to_string()
+}
+
+fn legacy_aspect_ratio_to_size(aspect_ratio: &str) -> Option<&'static str> {
     match aspect_ratio {
-        "unspecified" => ("auto", 1024, 1024),
-        "4:3" => ("1536x1024", 1536, 1024),
-        "3:4" => ("1024x1536", 1024, 1536),
-        "16:9" => ("1792x1024", 1792, 1024),
-        "9:16" => ("1024x1792", 1024, 1792),
+        "unspecified" => Some("auto"),
+        "1:1" => Some("1024x1024"),
+        "4:3" => Some("1536x1024"),
+        "3:4" => Some("1024x1536"),
+        "16:9" => Some("2048x1152"),
+        "9:16" => Some("2160x3840"),
+        _ => None,
+    }
+}
+
+fn normalized_generation_size(settings: &OpenAiGenerationSettings) -> String {
+    if settings.size != "auto" {
+        return settings.size.clone();
+    }
+
+    settings
+        .aspect_ratio
+        .as_deref()
+        .and_then(legacy_aspect_ratio_to_size)
+        .unwrap_or("auto")
+        .to_string()
+}
+
+fn generation_size_to_openai_size(size: &str) -> (&'static str, u32, u32) {
+    match size {
+        "auto" => ("auto", 1024, 1024),
+        "1536x1024" => ("1536x1024", 1536, 1024),
+        "1024x1536" => ("1024x1536", 1024, 1536),
+        "2048x2048" => ("2048x2048", 2048, 2048),
+        "2048x1152" => ("2048x1152", 2048, 1152),
+        "3840x2160" => ("3840x2160", 3840, 2160),
+        "2160x3840" => ("2160x3840", 2160, 3840),
         _ => ("1024x1024", 1024, 1024),
+    }
+}
+
+fn normalize_openai_image_quality(value: Option<&str>) -> &'static str {
+    match value.map(str::trim) {
+        Some("low") => "low",
+        Some("medium") => "medium",
+        Some("high") => "high",
+        Some("auto") => "auto",
+        _ => "auto",
     }
 }
 
@@ -641,7 +687,9 @@ async fn execute_openai_request(
         .timeout(Duration::from_secs(OPENAI_REQUEST_TIMEOUT_SECONDS))
         .build()
         .map_err(|error| error.to_string())?;
-    let (size, width, height) = aspect_ratio_to_openai_size(&request.settings.aspect_ratio);
+    let normalized_size = normalized_generation_size(&request.settings);
+    let (size, width, height) = generation_size_to_openai_size(&normalized_size);
+    let quality = normalize_openai_image_quality(request.settings.quality.as_deref());
     let prompt = compose_prompt(&request.prompt, request.negative_prompt.as_deref());
 
     let response = if request.reference_images.is_empty() {
@@ -653,7 +701,7 @@ async fn execute_openai_request(
                 prompt: &prompt,
                 size,
                 n: request.settings.image_count,
-                quality: "medium",
+                quality,
                 output_format: "png",
             })
             .send()
@@ -665,7 +713,7 @@ async fn execute_openai_request(
             .text("prompt", prompt)
             .text("size", size.to_string())
             .text("n", request.settings.image_count.to_string())
-            .text("quality", "medium".to_string())
+            .text("quality", quality.to_string())
             .text("output_format", "png".to_string());
 
         for image in &request.reference_images {
@@ -958,30 +1006,47 @@ mod tests {
     }
 
     #[test]
-    fn maps_canvas_aspect_ratios_to_openai_sizes() {
+    fn maps_generation_sizes_to_openai_sizes() {
+        assert_eq!(generation_size_to_openai_size("auto"), ("auto", 1024, 1024));
         assert_eq!(
-            aspect_ratio_to_openai_size("unspecified"),
-            ("auto", 1024, 1024)
-        );
-        assert_eq!(
-            aspect_ratio_to_openai_size("1:1"),
+            generation_size_to_openai_size("1024x1024"),
             ("1024x1024", 1024, 1024)
         );
         assert_eq!(
-            aspect_ratio_to_openai_size("4:3"),
+            generation_size_to_openai_size("1536x1024"),
             ("1536x1024", 1536, 1024)
         );
         assert_eq!(
-            aspect_ratio_to_openai_size("3:4"),
+            generation_size_to_openai_size("1024x1536"),
             ("1024x1536", 1024, 1536)
         );
         assert_eq!(
-            aspect_ratio_to_openai_size("16:9"),
-            ("1792x1024", 1792, 1024)
+            generation_size_to_openai_size("2048x2048"),
+            ("2048x2048", 2048, 2048)
         );
         assert_eq!(
-            aspect_ratio_to_openai_size("9:16"),
-            ("1024x1792", 1024, 1792)
+            generation_size_to_openai_size("2048x1152"),
+            ("2048x1152", 2048, 1152)
         );
+        assert_eq!(
+            generation_size_to_openai_size("3840x2160"),
+            ("3840x2160", 3840, 2160)
+        );
+        assert_eq!(
+            generation_size_to_openai_size("2160x3840"),
+            ("2160x3840", 2160, 3840)
+        );
+    }
+
+    #[test]
+    fn maps_legacy_aspect_ratio_to_size() {
+        let settings = OpenAiGenerationSettings {
+            image_count: 1,
+            size: "auto".to_string(),
+            aspect_ratio: Some("16:9".to_string()),
+            quality: None,
+        };
+
+        assert_eq!(normalized_generation_size(&settings), "2048x1152");
     }
 }

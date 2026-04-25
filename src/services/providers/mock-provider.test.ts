@@ -13,7 +13,7 @@ const baseInvocation: GenerationProviderInvocation = {
     model: "mock-canvas-v1",
     settings: {
       imageCount: 2,
-      aspectRatio: "1:1",
+      size: "1024x1024",
       quality: "medium",
       moderation: "low",
     },
@@ -51,7 +51,7 @@ describe("mock generation provider", () => {
     expect(result.images[0]?.imagePath.startsWith("data:image/svg+xml")).toBe(true);
   });
 
-  it("supports widescreen and portrait aspect ratios", async () => {
+  it("supports widescreen and portrait sizes", async () => {
     const wideResult = await mockGenerationProvider.generateImages(
       {
         ...baseInvocation,
@@ -59,7 +59,7 @@ describe("mock generation provider", () => {
           ...baseInvocation.request,
           settings: {
             imageCount: 1,
-            aspectRatio: "16:9",
+            size: "2048x1152",
             quality: "medium",
             moderation: "low",
           },
@@ -77,7 +77,7 @@ describe("mock generation provider", () => {
           ...baseInvocation.request,
           settings: {
             imageCount: 1,
-            aspectRatio: "9:16",
+            size: "2160x3840",
             quality: "medium",
             moderation: "low",
           },
@@ -89,12 +89,12 @@ describe("mock generation provider", () => {
     );
 
     expect(wideResult.images[0]).toMatchObject({
-      width: 1600,
-      height: 900,
+      width: 2048,
+      height: 1152,
     });
     expect(tallResult.images[0]).toMatchObject({
-      width: 900,
-      height: 1600,
+      width: 2160,
+      height: 3840,
     });
   });
 

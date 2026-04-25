@@ -81,28 +81,36 @@ function wrapText(text: string, maxCharacters: number) {
   return lines.slice(0, 4);
 }
 
-function getImageDimensions(aspectRatio: GenerationProviderInvocation["request"]["settings"]["aspectRatio"]) {
-  if (aspectRatio === "4:3") {
-    return { width: 1200, height: 900 };
+function getImageDimensions(size: GenerationProviderInvocation["request"]["settings"]["size"]) {
+  if (size === "1536x1024") {
+    return { width: 1536, height: 1024 };
   }
 
-  if (aspectRatio === "3:4") {
-    return { width: 900, height: 1200 };
+  if (size === "1024x1536") {
+    return { width: 1024, height: 1536 };
   }
 
-  if (aspectRatio === "16:9") {
-    return { width: 1600, height: 900 };
+  if (size === "2048x2048") {
+    return { width: 2048, height: 2048 };
   }
 
-  if (aspectRatio === "9:16") {
-    return { width: 900, height: 1600 };
+  if (size === "2048x1152") {
+    return { width: 2048, height: 1152 };
+  }
+
+  if (size === "3840x2160") {
+    return { width: 3840, height: 2160 };
+  }
+
+  if (size === "2160x3840") {
+    return { width: 2160, height: 3840 };
   }
 
   return { width: 1024, height: 1024 };
 }
 
 function createMockImageDataUrl(invocation: GenerationProviderInvocation, index: number) {
-  const { width, height } = getImageDimensions(invocation.request.settings.aspectRatio);
+  const { width, height } = getImageDimensions(invocation.request.settings.size);
   const promptHash = hashString(`${invocation.request.prompt}-${index}-${invocation.jobId}`);
   const hue = promptHash % 360;
   const secondaryHue = (hue + 38) % 360;

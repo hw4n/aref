@@ -41,7 +41,7 @@ const baseInvocation: GenerationProviderInvocation = {
     model: "gpt-image-2",
     settings: {
       imageCount: 2,
-      aspectRatio: "1:1",
+      size: "1024x1024",
       quality: "medium",
       moderation: "low",
     },
@@ -107,7 +107,7 @@ describe("openai generation provider", () => {
       model: "gpt-image-2",
       settings: {
         imageCount: 2,
-        aspectRatio: "1:1",
+        size: "1024x1024",
         quality: "medium",
         moderation: "low",
       },
@@ -152,7 +152,7 @@ describe("openai generation provider", () => {
           selectedAssetIds: ["asset-1"],
           settings: {
             imageCount: 1,
-            aspectRatio: "4:3",
+            size: "1536x1024",
             quality: "medium",
             moderation: "low",
           },

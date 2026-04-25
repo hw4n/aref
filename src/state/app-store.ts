@@ -214,8 +214,8 @@ function createDefaultGenerationDraft(): GenerationSheetDraft {
     model: "gpt-5.5",
     settings: {
       imageCount: 1,
-      aspectRatio: "unspecified",
-      quality: "medium",
+      size: "auto",
+      quality: "auto",
       moderation: "low",
     },
     pinnedAssetIds: null,

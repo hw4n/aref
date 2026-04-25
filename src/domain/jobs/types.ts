@@ -7,13 +7,21 @@ export type GenerationJobStatus =
   | "failed"
   | "cancelled";
 
-export type GenerationAspectRatio = "unspecified" | "1:1" | "4:3" | "3:4" | "16:9" | "9:16";
-export type GenerationImageQuality = "low" | "medium" | "high";
+export type GenerationImageSize =
+  | "auto"
+  | "1024x1024"
+  | "1536x1024"
+  | "1024x1536"
+  | "2048x2048"
+  | "2048x1152"
+  | "3840x2160"
+  | "2160x3840";
+export type GenerationImageQuality = "auto" | "low" | "medium" | "high";
 export type GenerationModeration = "low" | "auto";
 
 export interface GenerationSettings {
   imageCount: number;
-  aspectRatio: GenerationAspectRatio;
+  size: GenerationImageSize;
   quality: GenerationImageQuality;
   moderation: GenerationModeration;
 }

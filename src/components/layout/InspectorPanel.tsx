@@ -99,7 +99,7 @@ function GenerationJobCard({
       <div className="generation-job-card__details">
         <span>{`${job.request.selectedAssetIds.length} refs`}</span>
         <span>{`${job.request.settings.imageCount} outputs`}</span>
-        <span>{job.request.settings.aspectRatio}</span>
+        <span>{job.request.settings.size}</span>
         <span>{job.providerMode ?? (job.request.selectedAssetIds.length === 1 ? "edit" : "generate")}</span>
         <span>{`Try ${job.attemptCount}`}</span>
         {missingReferenceCount > 0 ? (

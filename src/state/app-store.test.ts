@@ -17,7 +17,7 @@ const sampleGenerationRequest: GenerationRequest = {
   model: "mock-canvas-v1",
   settings: {
     imageCount: 1,
-    aspectRatio: "1:1",
+    size: "1024x1024",
     quality: "medium",
     moderation: "low",
   },
