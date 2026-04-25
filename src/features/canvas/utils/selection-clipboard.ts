@@ -98,8 +98,40 @@ async function writePngBlobToClipboard(blob: Blob) {
   ]);
 }
 
+async function copySingleAssetAsOriginalImage(asset: AssetItem): Promise<ClipboardCopyResult> {
+  const loaded = await loadCanvasImage(asset.imagePath);
+
+  try {
+    const canvasWidth = Math.max(1, Math.ceil(loaded.image.naturalWidth || loaded.image.width || asset.width));
+    const canvasHeight = Math.max(1, Math.ceil(loaded.image.naturalHeight || loaded.image.height || asset.height));
+
+    if (canvasWidth > MAX_CLIPBOARD_CANVAS_EDGE || canvasHeight > MAX_CLIPBOARD_CANVAS_EDGE) {
+      throw new Error("Image is too large to copy at original resolution.");
+    }
+
+    const canvas = document.createElement("canvas");
+    canvas.width = canvasWidth;
+    canvas.height = canvasHeight;
+
+    const context = canvas.getContext("2d");
+    if (!context) {
+      throw new Error("Canvas rendering is not available.");
+    }
+
+    context.drawImage(loaded.image, 0, 0, canvasWidth, canvasHeight);
+    await writePngBlobToClipboard(await canvasToPngBlob(canvas));
+
+    return {
+      copiedCount: 1,
+      mode: "single-image",
+    };
+  } finally {
+    loaded.revoke();
+  }
+}
+
 async function copyAssetsAsNativeFiles(assets: AssetItem[]) {
-  if (!hasTauriRuntime() || assets.length < 2) {
+  if (!hasTauriRuntime() || assets.length === 0) {
     return 0;
   }
 
@@ -138,6 +170,10 @@ export async function copyAssetsToClipboard(assets: AssetItem[]): Promise<Clipbo
       copiedCount: 0,
       mode: "composite-image",
     };
+  }
+
+  if (visibleAssets.length === 1) {
+    return copySingleAssetAsOriginalImage(visibleAssets[0]!);
   }
 
   const nativeFileCount = await copyAssetsAsNativeFiles(visibleAssets);
