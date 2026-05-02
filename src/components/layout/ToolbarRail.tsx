@@ -2,73 +2,124 @@ import {
   CenterSelectionIcon,
   FitSelectionIcon,
   FrameAllIcon,
-  ImportIcon,
-  ResetZoomIcon,
+  GridIcon,
+  SettingsIcon,
+  SparklesIcon,
 } from "@/components/icons/ui-icons";
 import { useAppStore } from "@/state/app-store";
 
-interface ToolbarRailProps {
-  isImporting: boolean;
-  onImportClick: () => void;
-}
-
-export function ToolbarRail({ isImporting, onImportClick }: ToolbarRailProps) {
+export function ToolbarRail() {
   const frameAll = useAppStore((state) => state.frameAll);
   const frameSelection = useAppStore((state) => state.frameSelection);
   const centerSelection = useAppStore((state) => state.centerSelection);
-  const resetZoom = useAppStore((state) => state.resetZoom);
   const selectionCount = useAppStore((state) => state.project.selection.assetIds.length);
-  const actions = [
+  const generationDraft = useAppStore((state) => state.generationDraft);
+  const gridVisible = useAppStore((state) => state.uiPreferences.gridVisible);
+  const settingsOpen = useAppStore((state) => state.uiPreferences.settingsOpen);
+  const toggleGridVisible = useAppStore((state) => state.toggleGridVisible);
+  const setGenerationDraft = useAppStore((state) => state.setGenerationDraft);
+  const setSettingsOpen = useAppStore((state) => state.setSettingsOpen);
+  const setSettingsSection = useAppStore((state) => state.setSettingsSection);
+
+  const primaryActions = [
     {
-      label: isImporting ? "Importing" : "Import",
-      icon: <ImportIcon size={18} />,
-      onClick: onImportClick,
+      label: gridVisible ? "Hide Grid" : "Show Grid",
+      icon: <GridIcon size={18} />,
+      onClick: toggleGridVisible,
       disabled: false,
+      active: gridVisible,
     },
     {
-      label: "Frame",
+      label: "Generate",
+      icon: <SparklesIcon size={18} />,
+      onClick: () => setGenerationDraft({ isExplicitlyOpened: !generationDraft.isExplicitlyOpened }),
+      disabled: false,
+      active: selectionCount > 0 || generationDraft.isExplicitlyOpened,
+    },
+  ];
+
+  const canvasActions = [
+    {
+      label: "Frame All",
       icon: <FrameAllIcon size={18} />,
       onClick: frameAll,
       disabled: false,
+      active: false,
     },
     {
-      label: "Fit",
+      label: "Fit Selection",
       icon: <FitSelectionIcon size={18} />,
       onClick: frameSelection,
       disabled: selectionCount === 0,
+      active: false,
     },
     {
       label: "Center",
       icon: <CenterSelectionIcon size={18} />,
       onClick: centerSelection,
       disabled: selectionCount === 0,
+      active: false,
     },
+  ];
+
+  const utilityActions = [
     {
-      label: "Reset",
-      icon: <ResetZoomIcon size={18} />,
-      onClick: resetZoom,
+      label: settingsOpen ? "Close Settings" : "Settings",
+      icon: <SettingsIcon size={18} />,
+      onClick: () => {
+        if (settingsOpen) {
+          setSettingsOpen(false);
+          return;
+        }
+
+        setSettingsSection("providers");
+      },
       disabled: false,
+      active: settingsOpen,
     },
   ];
 
   return (
     <aside className="toolbar-rail">
-      <header className="toolbar-rail__brand">
-        <span className="toolbar-rail__mark">A</span>
-        <strong>Aref</strong>
-      </header>
-
-      <nav aria-label="Canvas actions" className="toolbar-rail__actions">
-        {actions.map((action) => (
+      <nav aria-label="Canvas tools" className="toolbar-rail__actions">
+        {primaryActions.map((action) => (
           <button
             key={action.label}
-            className="toolbar-tool"
+            className={`toolbar-tool ${action.active ? "toolbar-tool--active" : ""}`}
             disabled={action.disabled}
             onClick={action.onClick}
             title={action.label}
           >
             <span className="toolbar-tool__icon">{action.icon}</span>
-            <span className="toolbar-tool__label">{action.label}</span>
+            <span className="sr-only">{action.label}</span>
+          </button>
+        ))}
+        <span className="toolbar-rail__divider" />
+        {canvasActions.map((action) => (
+          <button
+            key={action.label}
+            className={`toolbar-tool ${action.active ? "toolbar-tool--active" : ""}`}
+            disabled={action.disabled}
+            onClick={action.onClick}
+            title={action.label}
+          >
+            <span className="toolbar-tool__icon">{action.icon}</span>
+            <span className="sr-only">{action.label}</span>
+          </button>
+        ))}
+      </nav>
+
+      <nav aria-label="Canvas utilities" className="toolbar-rail__actions toolbar-rail__actions--bottom">
+        {utilityActions.map((action) => (
+          <button
+            key={action.label}
+            className={`toolbar-tool ${action.active ? "toolbar-tool--active" : ""}`}
+            disabled={action.disabled}
+            onClick={action.onClick}
+            title={action.label}
+          >
+            <span className="toolbar-tool__icon">{action.icon}</span>
+            <span className="sr-only">{action.label}</span>
           </button>
         ))}
       </nav>

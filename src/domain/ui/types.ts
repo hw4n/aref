@@ -33,8 +33,9 @@ export type DiagnosticLogScope = "provider" | "auth" | "generation" | "system";
 
 export interface AppUiPreferences {
   settingsOpen: boolean;
-  leftSidebarOpen: boolean;
+  leftRailOpen: boolean;
   inspectorOpen: boolean;
+  gridVisible: boolean;
   inspectorWidth: number;
   generationSheetWidth: number;
   settingsSection: SettingsSurfaceSection;

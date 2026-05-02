@@ -1,3 +1,5 @@
+import { useMemo, useState } from "react";
+
 import {
   AssetsIcon,
   CancelIcon,
@@ -217,6 +219,8 @@ export function InspectorPanel({
   onCancelGeneration,
   onRerunGeneration,
 }: InspectorPanelProps) {
+  const [activeTab, setActiveTab] = useState<"layers" | "jobs" | "recent">("layers");
+  const [assetFilter, setAssetFilter] = useState<"all" | "imported" | "generated">("all");
   const sortedAssets = useAppStore(selectSortedAssets);
   const generationJobs = useAppStore(selectSortedGenerationJobs);
   const selectedAssetIds = useAppStore((state) => state.project.selection.assetIds);
@@ -232,116 +236,171 @@ export function InspectorPanel({
   const redoVisibilityCount = useAppStore((state) => state.visibilityHistory.redoStack.length);
 
   const hiddenAssetCount = sortedAssets.filter((asset) => asset.hidden).length;
+  const filteredAssets = useMemo(
+    () =>
+      sortedAssets.filter((asset) => {
+        if (assetFilter === "all") {
+          return true;
+        }
+
+        return asset.kind === assetFilter;
+      }),
+    [assetFilter, sortedAssets],
+  );
 
   return (
     <aside className="inspector-panel">
-      <header className="inspector-panel__header inspector-panel__header--secondary">
-        <div className="inspector-panel__title">
-          <AssetsIcon size={16} />
-          <h3>Layers</h3>
-        </div>
-        <strong className="inspector-panel__count">{sortedAssets.length}</strong>
+      <header className="inspector-panel__tabs inspector-panel__tabs--triple" aria-label="Inspector sections">
+        <button
+          className={`inspector-panel__tab ${activeTab === "layers" ? "inspector-panel__tab--active" : ""}`}
+          onClick={() => setActiveTab("layers")}
+        >
+          <span>Layers</span>
+        </button>
+        <button
+          className={`inspector-panel__tab ${activeTab === "jobs" ? "inspector-panel__tab--active" : ""}`}
+          onClick={() => setActiveTab("jobs")}
+        >
+          <span>Jobs</span>
+        </button>
+        <button
+          className={`inspector-panel__tab ${activeTab === "recent" ? "inspector-panel__tab--active" : ""}`}
+          onClick={() => setActiveTab("recent")}
+        >
+          <span>Recent</span>
+        </button>
       </header>
 
-      <div className="inspector-panel__bulk-actions">
-        <button className="inspector-panel__selection-action" disabled={selectedAssetIds.length === 0} onClick={hideSelected}>
-          <EyeOffIcon size={14} />
-          <span>Hide Selected</span>
-        </button>
-        <button className="inspector-panel__selection-action" disabled={selectedAssetIds.length === 0} onClick={unhideSelected}>
-          <EyeIcon size={14} />
-          <span>Unhide Selected</span>
-        </button>
-        <button className="inspector-panel__selection-action" disabled={hiddenAssetCount === 0} onClick={unhideAllHidden}>
-          <EyeIcon size={14} />
-          <span>Unhide All</span>
-        </button>
-        <button className="inspector-panel__selection-action" disabled={undoVisibilityCount === 0} onClick={undoVisibilityChange}>
-          <CancelIcon size={14} />
-          <span>Undo</span>
-        </button>
-        <button className="inspector-panel__selection-action" disabled={redoVisibilityCount === 0} onClick={redoVisibilityChange}>
-          <RetryIcon size={14} />
-          <span>Redo</span>
-        </button>
-      </div>
+      {activeTab === "layers" ? (
+        <section key="layers" className="inspector-panel__section">
+          <header className="inspector-panel__header inspector-panel__header--secondary">
+            <div className="inspector-panel__title">
+              <AssetsIcon size={16} />
+              <h3>Layers</h3>
+            </div>
+            <strong className="inspector-panel__count">{sortedAssets.length}</strong>
+          </header>
 
-      {sortedAssets.length > 0 ? (
-        <div className="asset-layer-list">
-          {sortedAssets.map((asset) => (
-            <AssetLayerRow
-              key={asset.id}
-              asset={asset}
-              isSelected={selectedAssetIds.includes(asset.id)}
-              onReveal={revealHiddenAsset}
-              onSelect={(assetId, additive) => selectAsset(assetId, { additive })}
-              onToggleHidden={setAssetHidden}
-            />
-          ))}
-        </div>
-      ) : (
-        <div className="inspector-panel__empty inspector-panel__empty--compact">
-          <AssetsIcon size={16} />
-          <span>No canvas items yet</span>
-        </div>
-      )}
+          <div className="inspector-panel__filter-tabs">
+            {(["all", "imported", "generated"] as const).map((filter) => (
+              <button
+                key={filter}
+                className={`inspector-panel__filter-tab ${assetFilter === filter ? "inspector-panel__filter-tab--active" : ""}`}
+                onClick={() => setAssetFilter(filter)}
+              >
+                <span>{filter === "all" ? "All" : filter[0].toUpperCase() + filter.slice(1)}</span>
+              </button>
+            ))}
+          </div>
 
-      <div className="inspector-panel__divider" />
-      <header className="inspector-panel__header inspector-panel__header--secondary">
-        <div className="inspector-panel__title">
-          <RunningIcon size={16} />
-          <h3>Jobs</h3>
-        </div>
-        <strong className="inspector-panel__count">{generationJobs.length}</strong>
-      </header>
+          {filteredAssets.length > 0 ? (
+            <div className="asset-layer-list">
+              {filteredAssets.map((asset) => (
+                <AssetLayerRow
+                  key={asset.id}
+                  asset={asset}
+                  isSelected={selectedAssetIds.includes(asset.id)}
+                  onReveal={revealHiddenAsset}
+                  onSelect={(assetId, additive) => selectAsset(assetId, { additive })}
+                  onToggleHidden={setAssetHidden}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="inspector-panel__empty inspector-panel__empty--compact">
+              <AssetsIcon size={16} />
+              <span>No canvas items yet</span>
+            </div>
+          )}
 
-      {generationJobs.length > 0 ? (
-        <div className="inspector-panel__jobs">
-          {generationJobs.map((job) => (
-            <GenerationJobCard
-              key={job.id}
-              jobId={job.id}
-              onCancelGeneration={onCancelGeneration}
-              onRerunGeneration={onRerunGeneration}
-            />
-          ))}
-        </div>
-      ) : (
-        <div className="inspector-panel__empty inspector-panel__empty--compact">
-          <SparklesIcon size={16} />
-          <span>No generation jobs yet</span>
-        </div>
-      )}
-
-      <div className="inspector-panel__divider" />
-      <header className="inspector-panel__header inspector-panel__header--secondary">
-        <div className="inspector-panel__title">
-          <RecentIcon size={16} />
-          <h3>Recent</h3>
-        </div>
-      </header>
-
-      {recentProjects.length > 0 ? (
-        <div className="inspector-panel__recent-list">
-          {recentProjects.map((project) => (
-            <button
-              key={project.path}
-              className="inspector-panel__recent-item"
-              disabled={!project.exists}
-              onClick={() => void onOpenRecentProject(project.path)}
-              title={project.path}
-            >
-              <strong>{getProjectDisplayName(project.name, project.path)}</strong>
-              <span>{project.path.split(/[\\/]/).at(-1)}</span>
+          <div className="inspector-panel__bulk-actions inspector-panel__bulk-actions--compact">
+            <button className="inspector-panel__selection-action" disabled={selectedAssetIds.length === 0} onClick={hideSelected}>
+              <EyeOffIcon size={14} />
+              <span>Hide</span>
             </button>
-          ))}
-        </div>
-      ) : (
-        <div className="inspector-panel__empty inspector-panel__empty--compact">
-          <RecentIcon size={16} />
-          <span>No recent files</span>
-        </div>
-      )}
+            <button className="inspector-panel__selection-action" disabled={selectedAssetIds.length === 0} onClick={unhideSelected}>
+              <EyeIcon size={14} />
+              <span>Unhide</span>
+            </button>
+            <button className="inspector-panel__selection-action" disabled={hiddenAssetCount === 0} onClick={unhideAllHidden}>
+              <EyeIcon size={14} />
+              <span>All</span>
+            </button>
+            <button className="inspector-panel__selection-action" disabled={undoVisibilityCount === 0} onClick={undoVisibilityChange}>
+              <CancelIcon size={14} />
+              <span>Undo</span>
+            </button>
+            <button className="inspector-panel__selection-action" disabled={redoVisibilityCount === 0} onClick={redoVisibilityChange}>
+              <RetryIcon size={14} />
+              <span>Redo</span>
+            </button>
+          </div>
+        </section>
+      ) : null}
+
+      {activeTab === "jobs" ? (
+        <section key="jobs" className="inspector-panel__section">
+          <header className="inspector-panel__header inspector-panel__header--secondary">
+            <div className="inspector-panel__title">
+              <RunningIcon size={16} />
+              <h3>Jobs</h3>
+            </div>
+            <strong className="inspector-panel__count">{generationJobs.length}</strong>
+          </header>
+
+          {generationJobs.length > 0 ? (
+            <div className="inspector-panel__jobs">
+              {generationJobs.map((job) => (
+                <GenerationJobCard
+                  key={job.id}
+                  jobId={job.id}
+                  onCancelGeneration={onCancelGeneration}
+                  onRerunGeneration={onRerunGeneration}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="inspector-panel__empty inspector-panel__empty--compact">
+              <SparklesIcon size={16} />
+              <span>No generation jobs yet</span>
+            </div>
+          )}
+        </section>
+      ) : null}
+
+      {activeTab === "recent" ? (
+        <section key="recent" className="inspector-panel__section">
+          <header className="inspector-panel__header inspector-panel__header--secondary">
+            <div className="inspector-panel__title">
+              <RecentIcon size={16} />
+              <h3>Recent</h3>
+            </div>
+            <strong className="inspector-panel__count">{recentProjects.length}</strong>
+          </header>
+
+          {recentProjects.length > 0 ? (
+            <div className="inspector-panel__recent-list">
+              {recentProjects.map((project) => (
+                <button
+                  key={project.path}
+                  className="inspector-panel__recent-item"
+                  disabled={!project.exists}
+                  onClick={() => void onOpenRecentProject(project.path)}
+                  title={project.path}
+                >
+                  <strong>{getProjectDisplayName(project.name, project.path)}</strong>
+                  <span>{project.path.split(/[\\/]/).at(-1)}</span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="inspector-panel__empty inspector-panel__empty--compact">
+              <RecentIcon size={16} />
+              <span>No recent files</span>
+            </div>
+          )}
+        </section>
+      ) : null}
     </aside>
   );
 }

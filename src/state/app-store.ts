@@ -108,6 +108,7 @@ export interface AppStoreState {
   ) => void;
   toggleLeftSidebar: () => void;
   toggleInspector: () => void;
+  toggleGridVisible: () => void;
   setInspectorWidth: (width: number) => void;
   setGenerationSheetWidth: (width: number) => void;
   setSettingsOpen: (open: boolean) => void;
@@ -790,7 +791,7 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
       set((state) => ({
         uiPreferences: {
           ...state.uiPreferences,
-          leftSidebarOpen: !state.uiPreferences.leftSidebarOpen,
+          leftRailOpen: !state.uiPreferences.leftRailOpen,
         },
       }));
     },
@@ -799,6 +800,14 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
         uiPreferences: {
           ...state.uiPreferences,
           inspectorOpen: !state.uiPreferences.inspectorOpen,
+        },
+      }));
+    },
+    toggleGridVisible: () => {
+      set((state) => ({
+        uiPreferences: {
+          ...state.uiPreferences,
+          gridVisible: !state.uiPreferences.gridVisible,
         },
       }));
     },

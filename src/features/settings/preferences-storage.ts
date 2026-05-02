@@ -13,8 +13,9 @@ function normalizePanelWidth(value: unknown, fallback: number) {
 export function getDefaultAppUiPreferences(): AppUiPreferences {
   return {
     settingsOpen: false,
-    leftSidebarOpen: false,
-    inspectorOpen: false,
+    leftRailOpen: true,
+    inspectorOpen: true,
+    gridVisible: true,
     inspectorWidth: DEFAULT_INSPECTOR_WIDTH,
     generationSheetWidth: DEFAULT_GENERATION_SHEET_WIDTH,
     settingsSection: "providers",
@@ -33,8 +34,9 @@ export function normalizeAppUiPreferences(input: Partial<AppUiPreferences> | nul
 
   return {
     settingsOpen: nextPreferences.settingsOpen ?? defaults.settingsOpen,
-    leftSidebarOpen: nextPreferences.leftSidebarOpen ?? defaults.leftSidebarOpen,
+    leftRailOpen: nextPreferences.leftRailOpen ?? defaults.leftRailOpen,
     inspectorOpen: nextPreferences.inspectorOpen ?? defaults.inspectorOpen,
+    gridVisible: nextPreferences.gridVisible ?? defaults.gridVisible,
     inspectorWidth: normalizePanelWidth(nextPreferences.inspectorWidth, defaults.inspectorWidth),
     generationSheetWidth: normalizePanelWidth(nextPreferences.generationSheetWidth, defaults.generationSheetWidth),
     settingsSection:

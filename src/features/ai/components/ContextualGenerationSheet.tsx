@@ -132,13 +132,19 @@ export function ContextualGenerationSheet({
       return;
     }
 
-    void onSubmitGeneration({
+    const request: GenerationRequest = {
       selectedAssetIds: referenceAssetIds,
       prompt: generationDraft.prompt,
       negativePrompt: generationDraft.negativePrompt,
       provider: activeProvider.id,
       model: isOAuthProvider ? activeProvider.defaultModel : generationDraft.model,
       settings: generationDraft.settings,
+    };
+
+    void Promise.resolve(onSubmitGeneration(request)).then(() => {
+      setGenerationDraft({
+        isExplicitlyOpened: false,
+      });
     });
   };
 

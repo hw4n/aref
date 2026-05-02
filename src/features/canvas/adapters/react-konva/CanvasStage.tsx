@@ -3,18 +3,14 @@ import Konva from "konva";
 import { Circle, Group, Image as KonvaImage, Layer, Rect, Stage, Text, Transformer } from "react-konva";
 
 import {
-  AssetsIcon,
   CancelIcon,
   EyeIcon,
   EyeOffIcon,
   LockIcon,
-  MarqueeIcon,
-  PanIcon,
   RetryIcon,
   SelectionIcon,
   SizeIcon,
   SparklesIcon,
-  ZoomIcon,
 } from "@/components/icons/ui-icons";
 import { getAssetBounds } from "@/domain/assets/asset-geometry";
 import type { AssetItem } from "@/domain/assets/types";
@@ -245,16 +241,24 @@ function GenerationJobPlaceholderItem({
         onInteractionActiveChange(true);
       }}
       onMouseDown={(event) => {
-        event.cancelBubble = true;
+        if (!isPanMode) {
+          event.cancelBubble = true;
+        }
       }}
       onTouchStart={(event) => {
-        event.cancelBubble = true;
+        if (!isPanMode) {
+          event.cancelBubble = true;
+        }
       }}
       onClick={(event) => {
-        event.cancelBubble = true;
+        if (!isPanMode) {
+          event.cancelBubble = true;
+        }
       }}
       onTap={(event) => {
-        event.cancelBubble = true;
+        if (!isPanMode) {
+          event.cancelBubble = true;
+        }
       }}
       onDragMove={(event) => {
         event.cancelBubble = true;
@@ -446,6 +450,10 @@ function AssetLayerItem({
           return;
         }
 
+        if (isPanMode) {
+          return;
+        }
+
         event.cancelBubble = true;
         if (suppressClickAfterDragRef.current) {
           return;
@@ -454,6 +462,10 @@ function AssetLayerItem({
         onSelect(asset.id, isAdditiveSelectionModifier(mouseEvent));
       }}
       onTap={(event) => {
+        if (isPanMode) {
+          return;
+        }
+
         event.cancelBubble = true;
         if (suppressClickAfterDragRef.current) {
           return;
@@ -463,6 +475,10 @@ function AssetLayerItem({
       }}
       onContextMenu={(event) => {
         event.evt.preventDefault();
+        if (isPanMode) {
+          return;
+        }
+
         event.cancelBubble = true;
         onContextMenu(
           asset.id,
@@ -570,9 +586,7 @@ export function CanvasStage() {
   const assets = useAppStore(selectSortedVisibleAssets);
   const assetRegistry = useAppStore((state) => state.project.assets);
   const activeGenerationJobs = useAppStore(selectActiveGenerationJobs);
-  const assetCount = useAppStore((state) => Object.keys(state.project.assets).length);
   const selectedAssetIds = useAppStore(selectSelectedAssetIds);
-  const selectionCount = useAppStore((state) => state.project.selection.assetIds.length);
   const hiddenAssetCount = useAppStore((state) =>
     Object.values(state.project.assets).filter((asset) => asset.hidden).length,
   );
@@ -617,6 +631,7 @@ export function CanvasStage() {
   const undoVisibilityChange = useAppStore((state) => state.undoVisibilityChange);
   const redoVisibilityChange = useAppStore((state) => state.redoVisibilityChange);
   const zoomCameraAtPoint = useAppStore((state) => state.zoomCameraAtPoint);
+  const gridVisible = useAppStore((state) => state.uiPreferences.gridVisible);
   const isSpacePressed = useAppStore((state) => state.isSpacePressed);
   const pushToast = useAppStore((state) => state.pushToast);
 
@@ -710,6 +725,8 @@ export function CanvasStage() {
   );
   const zoomLabel = `${Math.round(camera.zoom * 100)}%`;
   const hasLockedSelection = selectedAssetIds.some((assetId) => assetMap[assetId]?.locked);
+  const isPanInteractionMode = isPanning || isSpacePressed || Boolean(marqueeSession);
+  const panelClassName = gridVisible ? "canvas-panel" : "canvas-panel canvas-panel--grid-hidden";
   const surfaceClassName = isPanning
     ? "canvas-surface canvas-surface--panning"
     : isSpacePressed
@@ -1059,7 +1076,7 @@ export function CanvasStage() {
   };
 
   return (
-    <div className="canvas-panel" ref={setPanelElement}>
+    <div className={panelClassName} ref={setPanelElement}>
       <div className={surfaceClassName}>
         {assets.length === 0 && activeGenerationJobs.length === 0 ? (
           <div className="canvas-onboarding">
@@ -1205,7 +1222,7 @@ export function CanvasStage() {
                     key={asset.id}
                     asset={displayAsset}
                     isSelected={selectedAssetSet.has(asset.id)}
-                    isPanMode={isPanning || isSpacePressed || Boolean(marqueeSession)}
+                    isPanMode={isPanInteractionMode}
                     onContextMenu={handleAssetContextMenu}
                     onInteractionActiveChange={setCanvasInteractionActive}
                     onSelect={(assetId, additive) => selectAsset(assetId, { additive })}
@@ -1255,7 +1272,7 @@ export function CanvasStage() {
                     .map((assetId) => assetRegistry[assetId])
                     .filter((asset): asset is AssetItem => Boolean(asset))}
                   animationTick={generationAnimationTick}
-                  isPanMode={isPanning || isSpacePressed || Boolean(marqueeSession)}
+                  isPanMode={isPanInteractionMode}
                   onDrag={setGenerationJobCanvasPlacement}
                   onInteractionActiveChange={setCanvasInteractionActive}
                 />
@@ -1369,26 +1386,9 @@ export function CanvasStage() {
       ) : null}
 
       <div className="canvas-statusbar">
-        <span className="canvas-statusbar__item" title="Assets">
-          <AssetsIcon size={13} />
-          {assetCount}
-        </span>
-        <span className="canvas-statusbar__item" title="Selected">
-          <SelectionIcon size={13} />
-          {selectionCount}
-        </span>
-        <span className="canvas-statusbar__item" title="Zoom">
-          <ZoomIcon size={13} />
+        <button className="canvas-statusbar__item" onClick={resetZoom} title="Reset Zoom">
           {zoomLabel}
-        </span>
-        <span className="canvas-statusbar__item" title="Pan">
-          <PanIcon size={13} />
-          Space
-        </span>
-        <span className="canvas-statusbar__item" title="Marquee selection">
-          <MarqueeIcon size={13} />
-          Drag
-        </span>
+        </button>
       </div>
     </div>
   );

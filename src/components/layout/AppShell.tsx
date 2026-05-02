@@ -1,13 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 
 import {
+  FullscreenIcon,
+  ImportIcon,
+  NewProjectIcon,
+  OpenProjectIcon,
   PanelLeftIcon,
   PanelRightIcon,
+  SaveAsIcon,
+  SaveIcon,
+  SourceIcon,
 } from "@/components/icons/ui-icons";
 import { DeveloperLogDrawer } from "@/components/layout/DeveloperLogDrawer";
 import { InspectorPanel } from "@/components/layout/InspectorPanel";
 import { LeftSidebar } from "@/components/layout/LeftSidebar";
 import { ToastViewport } from "@/components/layout/ToastViewport";
+import { ToolbarRail } from "@/components/layout/ToolbarRail";
 import { ContextualGenerationSheet } from "@/features/ai/components/ContextualGenerationSheet";
 import { shouldShowContextualGenerationSheet } from "@/features/ai/contextual-sheet";
 import { useGenerationHarness } from "@/features/ai/use-generation-harness";
@@ -70,6 +78,7 @@ export function AppShell() {
   const appShellRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const chatGptUrlInputRef = useRef<HTMLInputElement | null>(null);
+  const settingsPaneRef = useRef<HTMLDivElement | null>(null);
   const resizePointerIdRef = useRef<number | null>(null);
   const [resizingPane, setResizingPane] = useState<"inspector" | "generation" | null>(null);
   const [isImporting, setIsImporting] = useState(false);
@@ -77,20 +86,23 @@ export function AppShell() {
   const [importError, setImportError] = useState<string | null>(null);
   const [chatGptImportDialogOpen, setChatGptImportDialogOpen] = useState(false);
   const [chatGptShareUrl, setChatGptShareUrl] = useState("");
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const importAssets = useAppStore((state) => state.importAssets);
   const projectName = useAppStore((state) => state.project.name);
-  const selectionCount = useAppStore((state) => state.project.selection.assetIds.length);
-  const isGenerationSheetExplicitlyOpened = useAppStore((state) => state.generationDraft.isExplicitlyOpened);
   const activeProviderId = useAppStore((state) => state.generationDraft.provider);
   const areLogsVisible = useAppStore((state) => state.uiPreferences.developerMode && state.uiPreferences.logsVisible);
-  const leftSidebarOpen = useAppStore((state) => state.uiPreferences.leftSidebarOpen);
+  const leftRailOpen = useAppStore((state) => state.uiPreferences.leftRailOpen);
+  const settingsOpen = useAppStore((state) => state.uiPreferences.settingsOpen);
   const inspectorOpen = useAppStore((state) => state.uiPreferences.inspectorOpen);
   const inspectorWidth = useAppStore((state) => state.uiPreferences.inspectorWidth);
   const generationSheetWidth = useAppStore((state) => state.uiPreferences.generationSheetWidth);
+  const selectionCount = useAppStore((state) => state.project.selection.assetIds.length);
+  const isGenerationSheetExplicitlyOpened = useAppStore((state) => state.generationDraft.isExplicitlyOpened);
   const toggleLeftSidebar = useAppStore((state) => state.toggleLeftSidebar);
   const toggleInspector = useAppStore((state) => state.toggleInspector);
   const setInspectorWidth = useAppStore((state) => state.setInspectorWidth);
   const setGenerationSheetWidth = useAppStore((state) => state.setGenerationSheetWidth);
+  const setSettingsOpen = useAppStore((state) => state.setSettingsOpen);
   const pushToast = useAppStore((state) => state.pushToast);
   useUiPreferencesPersistence();
   useGenerationDraftPersistence();
@@ -108,6 +120,7 @@ export function AppShell() {
   } = useProjectPersistence();
   const { submitGeneration, cancelGeneration, rerunGeneration } = useGenerationHarness();
   const providerManagement = useProviderManagement();
+  const showGenerationSheet = shouldShowContextualGenerationSheet(selectionCount, isGenerationSheetExplicitlyOpened);
 
   const handleImportFiles = useCallback(
     async (files: File[]) => {
@@ -218,6 +231,47 @@ export function AppShell() {
   }, [chatGptImportDialogOpen, isChatGptImporting]);
 
   useEffect(() => {
+    const syncFullscreenState = () => {
+      setIsFullscreen(Boolean(document.fullscreenElement));
+    };
+
+    syncFullscreenState();
+    document.addEventListener("fullscreenchange", syncFullscreenState);
+    return () => document.removeEventListener("fullscreenchange", syncFullscreenState);
+  }, []);
+
+  const handleToggleFullscreen = useCallback(() => {
+    if (document.fullscreenElement) {
+      void document.exitFullscreen().catch((error) => {
+        pushToast({
+          kind: "error",
+          title: "Fullscreen failed",
+          description: error instanceof Error ? error.message : "Could not exit fullscreen.",
+        });
+      });
+      return;
+    }
+
+    const target = appShellRef.current ?? document.documentElement;
+    if (!target.requestFullscreen) {
+      pushToast({
+        kind: "error",
+        title: "Fullscreen unavailable",
+        description: "This environment does not expose the fullscreen API.",
+      });
+      return;
+    }
+
+    void target.requestFullscreen().catch((error) => {
+      pushToast({
+        kind: "error",
+        title: "Fullscreen failed",
+        description: error instanceof Error ? error.message : "Could not enter fullscreen.",
+      });
+    });
+  }, [pushToast]);
+
+  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (isTypingTarget(event.target)) {
         return;
@@ -258,10 +312,19 @@ export function AppShell() {
   }, [createNewProject, openImportDialog, openProject, saveProject, saveProjectAs]);
 
   const workspaceClassName = useMemo(
-    () => (isDropActive ? "workspace workspace--drop-active" : "workspace"),
+    () => [
+      "workspace",
+      isDropActive ? "workspace--drop-active" : "",
+    ].filter(Boolean).join(" "),
     [isDropActive],
   );
-  const showGenerationSheet = shouldShowContextualGenerationSheet(selectionCount, isGenerationSheetExplicitlyOpened);
+  const workspaceBodyClassName = useMemo(
+    () => [
+      "workspace__body",
+      leftRailOpen ? "" : "workspace__body--rail-hidden",
+    ].filter(Boolean).join(" "),
+    [leftRailOpen],
+  );
   const appShellClassName = useMemo(
     () => (resizingPane ? "app-shell app-shell--resizing" : "app-shell"),
     [resizingPane],
@@ -274,30 +337,64 @@ export function AppShell() {
   const projectActionItems = [
     {
       label: "New",
+      icon: <NewProjectIcon size={15} />,
       onClick: createNewProject,
       disabled: false,
     },
     {
       label: "Open",
+      icon: <OpenProjectIcon size={15} />,
       onClick: () => void openProject(),
       disabled: !isDesktopPersistenceAvailable,
     },
     {
       label: "Save",
+      icon: <SaveIcon size={15} />,
       onClick: () => void saveProject(),
       disabled: !isDesktopPersistenceAvailable,
     },
     {
       label: "Save As",
+      icon: <SaveAsIcon size={15} />,
       onClick: () => void saveProjectAs(),
       disabled: !isDesktopPersistenceAvailable,
     },
     {
-      label: isChatGptImporting ? "Importing" : "Import from ChatGPT",
+      label: isImporting ? "Importing" : "Import",
+      icon: <ImportIcon size={15} />,
+      onClick: openImportDialog,
+      disabled: isImporting,
+    },
+    {
+      label: isChatGptImporting ? "Importing" : "ChatGPT",
+      icon: <SourceIcon size={15} />,
       onClick: openChatGptImportDialog,
       disabled: !isDesktopPersistenceAvailable || isImporting,
     },
   ];
+
+  useEffect(() => {
+    if (!settingsOpen) {
+      return;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+
+      if (!(target instanceof Node)) {
+        return;
+      }
+
+      if (settingsPaneRef.current?.contains(target)) {
+        return;
+      }
+
+      setSettingsOpen(false);
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    return () => document.removeEventListener("pointerdown", handlePointerDown, true);
+  }, [setSettingsOpen, settingsOpen]);
 
   const updateInspectorWidthFromClientX = useCallback((clientX: number) => {
     const shellBounds = appShellRef.current?.getBoundingClientRect();
@@ -307,7 +404,7 @@ export function AppShell() {
     }
 
     const nextWidth = clampOverlayWidth(shellBounds.right - clientX, shellBounds.width, {
-      leftReservedWidth: leftSidebarOpen ? LEFT_PANEL_WIDTH : 0,
+      leftReservedWidth: 0,
       rightReservedWidth: showGenerationSheet ? generationSheetWidth : 0,
       minWidth: MIN_INSPECTOR_WIDTH,
       maxWidth: MAX_INSPECTOR_WIDTH,
@@ -315,7 +412,7 @@ export function AppShell() {
     if (nextWidth !== inspectorWidth) {
       setInspectorWidth(nextWidth);
     }
-  }, [generationSheetWidth, inspectorWidth, leftSidebarOpen, setInspectorWidth, showGenerationSheet]);
+  }, [generationSheetWidth, inspectorWidth, setInspectorWidth, showGenerationSheet]);
 
   const updateGenerationSheetWidthFromClientX = useCallback((clientX: number) => {
     const shellBounds = appShellRef.current?.getBoundingClientRect();
@@ -326,7 +423,7 @@ export function AppShell() {
 
     const rightEdge = shellBounds.right - (inspectorOpen ? inspectorWidth : 0);
     const nextWidth = clampOverlayWidth(rightEdge - clientX, shellBounds.width, {
-      leftReservedWidth: leftSidebarOpen ? LEFT_PANEL_WIDTH : 0,
+      leftReservedWidth: 0,
       rightReservedWidth: inspectorOpen ? inspectorWidth : 0,
       minWidth: MIN_GENERATION_SHEET_WIDTH,
       maxWidth: MAX_GENERATION_SHEET_WIDTH,
@@ -334,19 +431,19 @@ export function AppShell() {
     if (nextWidth !== generationSheetWidth) {
       setGenerationSheetWidth(nextWidth);
     }
-  }, [generationSheetWidth, inspectorOpen, inspectorWidth, leftSidebarOpen, setGenerationSheetWidth]);
+  }, [generationSheetWidth, inspectorOpen, inspectorWidth, setGenerationSheetWidth]);
 
   useEffect(() => {
     const clampToViewport = () => {
       const shellWidth = appShellRef.current?.getBoundingClientRect().width ?? window.innerWidth;
       const nextInspectorWidth = clampOverlayWidth(inspectorWidth, shellWidth, {
-        leftReservedWidth: leftSidebarOpen ? LEFT_PANEL_WIDTH : 0,
+        leftReservedWidth: 0,
         rightReservedWidth: showGenerationSheet ? generationSheetWidth : 0,
         minWidth: MIN_INSPECTOR_WIDTH,
         maxWidth: MAX_INSPECTOR_WIDTH,
       });
       const nextGenerationSheetWidth = clampOverlayWidth(generationSheetWidth, shellWidth, {
-        leftReservedWidth: leftSidebarOpen ? LEFT_PANEL_WIDTH : 0,
+        leftReservedWidth: 0,
         rightReservedWidth: inspectorOpen ? inspectorWidth : 0,
         minWidth: MIN_GENERATION_SHEET_WIDTH,
         maxWidth: MAX_GENERATION_SHEET_WIDTH,
@@ -368,7 +465,6 @@ export function AppShell() {
     generationSheetWidth,
     inspectorOpen,
     inspectorWidth,
-    leftSidebarOpen,
     setGenerationSheetWidth,
     setInspectorWidth,
     showGenerationSheet,
@@ -432,13 +528,13 @@ export function AppShell() {
   const handleInspectorResizeReset = useCallback(() => {
     const shellWidth = appShellRef.current?.getBoundingClientRect().width ?? window.innerWidth;
     const nextWidth = clampOverlayWidth(DEFAULT_INSPECTOR_WIDTH, shellWidth, {
-      leftReservedWidth: leftSidebarOpen ? LEFT_PANEL_WIDTH : 0,
+      leftReservedWidth: 0,
       rightReservedWidth: showGenerationSheet ? generationSheetWidth : 0,
       minWidth: MIN_INSPECTOR_WIDTH,
       maxWidth: MAX_INSPECTOR_WIDTH,
     });
     setInspectorWidth(nextWidth);
-  }, [generationSheetWidth, leftSidebarOpen, setInspectorWidth, showGenerationSheet]);
+  }, [generationSheetWidth, setInspectorWidth, showGenerationSheet]);
 
   const handleGenerationSheetResizeStart = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) {
@@ -454,13 +550,13 @@ export function AppShell() {
   const handleGenerationSheetResizeReset = useCallback(() => {
     const shellWidth = appShellRef.current?.getBoundingClientRect().width ?? window.innerWidth;
     const nextWidth = clampOverlayWidth(DEFAULT_GENERATION_SHEET_WIDTH, shellWidth, {
-      leftReservedWidth: leftSidebarOpen ? LEFT_PANEL_WIDTH : 0,
+      leftReservedWidth: 0,
       rightReservedWidth: inspectorOpen ? inspectorWidth : 0,
       minWidth: MIN_GENERATION_SHEET_WIDTH,
       maxWidth: MAX_GENERATION_SHEET_WIDTH,
     });
     setGenerationSheetWidth(nextWidth);
-  }, [inspectorOpen, inspectorWidth, leftSidebarOpen, setGenerationSheetWidth]);
+  }, [inspectorOpen, inspectorWidth, setGenerationSheetWidth]);
 
   return (
     <div ref={appShellRef} className={appShellClassName}>
@@ -529,7 +625,11 @@ export function AppShell() {
       <main className={workspaceClassName}>
         <header className="workspace__header">
           <div className="workspace__header-left">
-            <button className="workspace__panel-toggle" onClick={toggleLeftSidebar} title="Toggle Left Sidebar">
+            <button
+              className={`workspace__panel-toggle ${leftRailOpen ? "workspace__panel-toggle--active" : ""}`}
+              onClick={toggleLeftSidebar}
+              title={leftRailOpen ? "Hide Left Rail" : "Show Left Rail"}
+            >
               <PanelLeftIcon size={16} />
             </button>
             <div className="workspace__project-actions">
@@ -541,6 +641,7 @@ export function AppShell() {
                   onClick={action.onClick}
                   title={action.label}
                 >
+                  {action.icon}
                   <span>{action.label}</span>
                 </button>
               ))}
@@ -553,12 +654,25 @@ export function AppShell() {
 
           <div className="workspace__header-right">
             <div className="workspace__path-status">
-              <span className="workspace__status">{persistenceStatus}</span>
+              <span className={`workspace__status workspace__status--${persistenceStatus}`}>
+                {persistenceStatus === "idle" ? "Saved" : persistenceStatus}
+              </span>
               <span className="workspace__path" title={currentProjectPath || "Draft"}>
                 {currentProjectPath ? currentProjectPath.split(/[\\/]/).at(-1) : "Draft"}
               </span>
             </div>
-            <button className="workspace__panel-toggle" onClick={toggleInspector} title="Toggle Inspector">
+            <button
+              className={`workspace__panel-toggle ${isFullscreen ? "workspace__panel-toggle--active" : ""}`}
+              onClick={handleToggleFullscreen}
+              title={isFullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}
+            >
+              <FullscreenIcon size={16} />
+            </button>
+            <button
+              className={`workspace__panel-toggle ${inspectorOpen ? "workspace__panel-toggle--active" : ""}`}
+              onClick={toggleInspector}
+              title={inspectorOpen ? "Hide Right Sidebar" : "Show Right Sidebar"}
+            >
               <PanelRightIcon size={16} />
             </button>
           </div>
@@ -566,7 +680,8 @@ export function AppShell() {
           {workspaceError ? <p className="workspace__error">{workspaceError}</p> : null}
         </header>
 
-        <div className="workspace__body">
+        <div className={workspaceBodyClassName}>
+          {leftRailOpen ? <ToolbarRail /> : null}
           <div className="workspace__canvas">
             {isDropActive ? (
               <div className="workspace__drop-overlay">
@@ -575,11 +690,13 @@ export function AppShell() {
             ) : null}
             <CanvasStage />
           </div>
-          {leftSidebarOpen ? (
-            <div className="workspace__left-pane" style={{ width: LEFT_PANEL_WIDTH }}>
+          {settingsOpen ? (
+            <div
+              ref={settingsPaneRef}
+              className={`workspace__left-pane ${leftRailOpen ? "" : "workspace__left-pane--rail-hidden"}`}
+              style={{ width: LEFT_PANEL_WIDTH }}
+            >
               <LeftSidebar
-                isImporting={isImporting}
-                onImportClick={openImportDialog}
                 providerEntries={providerManagement.providerEntries}
                 openAiAuthMethod={providerManagement.openAiAuthMethod}
                 openAiAvailabilityByMethod={providerManagement.openAiAvailabilityByMethod}
@@ -607,19 +724,10 @@ export function AppShell() {
             <div
               className="workspace__right-pane workspace__right-pane--generation"
               style={{
+                right: inspectorOpen ? inspectorWidth + 22 : 10,
                 width: generationSheetWidth,
-                right: inspectorOpen ? inspectorWidth : 0,
               }}
             >
-              <div
-                className="workspace__pane-handle workspace__pane-handle--left"
-                aria-label="Resize generation sheet"
-                role="separator"
-                aria-orientation="vertical"
-                title="Drag to resize generation sheet"
-                onDoubleClick={handleGenerationSheetResizeReset}
-                onPointerDown={handleGenerationSheetResizeStart}
-              />
               <ContextualGenerationSheet
                 activeProvider={providerManagement.activeProvider}
                 onSubmitGeneration={submitGeneration}
@@ -627,26 +735,20 @@ export function AppShell() {
             </div>
           ) : null}
           {inspectorOpen ? (
-            <div
-              className="workspace__right-pane workspace__right-pane--inspector"
-              style={{ width: inspectorWidth }}
-            >
-              <div
-                className="workspace__pane-handle workspace__pane-handle--left"
-                aria-label="Resize inspector"
-                role="separator"
-                aria-orientation="vertical"
-                title="Drag to resize inspector"
-                onDoubleClick={handleInspectorResizeReset}
-                onPointerDown={handleInspectorResizeStart}
-              />
+          <div
+            className="workspace__right-pane workspace__right-pane--inspector"
+            style={{
+              right: 10,
+              width: inspectorWidth,
+            }}
+          >
               <InspectorPanel
                 recentProjects={recentProjects}
                 onOpenRecentProject={openRecentProject}
                 onCancelGeneration={cancelGeneration}
                 onRerunGeneration={rerunGeneration}
               />
-            </div>
+          </div>
           ) : null}
         </div>
         {areLogsVisible ? <DeveloperLogDrawer activeProviderId={activeProviderId} /> : null}

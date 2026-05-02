@@ -29,14 +29,6 @@ function IconBase({
   );
 }
 
-export function ChevronDownIcon(props: IconProps) {
-  return (
-    <IconBase {...props}>
-      <path d="m6 9 6 6 6-6" />
-    </IconBase>
-  );
-}
-
 export function ImportIcon(props: IconProps) {
   return (
     <IconBase {...props}>
@@ -92,6 +84,21 @@ export function FrameAllIcon(props: IconProps) {
       <path d="M15 4h5v5" />
       <path d="M20 15v5h-5" />
       <path d="M9 20H4v-5" />
+    </IconBase>
+  );
+}
+
+export function FullscreenIcon(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="M8 4H4v4" />
+      <path d="M16 4h4v4" />
+      <path d="M20 16v4h-4" />
+      <path d="M8 20H4v-4" />
+      <path d="M4 4l6 6" />
+      <path d="m14 10 6-6" />
+      <path d="m20 20-6-6" />
+      <path d="m10 14-6 6" />
     </IconBase>
   );
 }
@@ -475,6 +482,18 @@ export function TerminalIcon(props: IconProps) {
       <rect x="3" y="5" width="18" height="14" rx="1" />
       <path d="m7 10 3 2-3 2" />
       <path d="M13 15h4" />
+    </IconBase>
+  );
+}
+
+export function GridIcon(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <rect x="4" y="4" width="16" height="16" rx="1" />
+      <path d="M9.3 4v16" />
+      <path d="M14.7 4v16" />
+      <path d="M4 9.3h16" />
+      <path d="M4 14.7h16" />
     </IconBase>
   );
 }

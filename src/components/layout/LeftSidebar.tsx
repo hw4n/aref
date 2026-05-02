@@ -1,17 +1,10 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   AlertIcon,
   CancelIcon,
-  CenterSelectionIcon,
   CheckCircleIcon,
-  CodeIcon,
-  FitSelectionIcon,
-  FrameAllIcon,
-  ImportIcon,
   RecentIcon,
-  ResetZoomIcon,
-  SettingsIcon,
   SourceIcon,
   SparklesIcon,
   TerminalIcon,
@@ -28,13 +21,10 @@ import type {
   ProviderAuthMethod,
   ProviderAvailabilityDescriptor,
 } from "@/domain/providers/types";
-import type { SettingsSurfaceSection } from "@/domain/ui/types";
 import type { ProviderFamilyEntry } from "@/features/providers/use-provider-management";
 import { useAppStore } from "@/state/app-store";
 
 interface LeftSidebarProps {
-  isImporting: boolean;
-  onImportClick: () => void;
   providerEntries: ProviderFamilyEntry[];
   openAiAuthMethod: ProviderAuthMethod;
   openAiAvailabilityByMethod: Record<ProviderAuthMethod, ProviderAvailabilityDescriptor>;
@@ -78,28 +68,7 @@ function ProviderStatePill({ availability }: { availability: ProviderAvailabilit
   );
 }
 
-function SettingTabButton({
-  active,
-  icon,
-  label,
-  onClick,
-}: {
-  active: boolean;
-  icon: ReactNode;
-  label: string;
-  onClick: () => void;
-}) {
-  return (
-    <button className={`settings-tab ${active ? "settings-tab--active" : ""}`} onClick={onClick}>
-      {icon}
-      <span>{label}</span>
-    </button>
-  );
-}
-
 export function LeftSidebar({
-  isImporting,
-  onImportClick,
   providerEntries,
   openAiAuthMethod,
   openAiAvailabilityByMethod,
@@ -121,13 +90,7 @@ export function LeftSidebar({
   selectProviderFamily,
   setOpenAiAuthMethod,
 }: LeftSidebarProps) {
-  const frameAll = useAppStore((state) => state.frameAll);
-  const frameSelection = useAppStore((state) => state.frameSelection);
-  const centerSelection = useAppStore((state) => state.centerSelection);
-  const resetZoom = useAppStore((state) => state.resetZoom);
-  const selectionCount = useAppStore((state) => state.project.selection.assetIds.length);
   const uiPreferences = useAppStore((state) => state.uiPreferences);
-  const setSettingsOpen = useAppStore((state) => state.setSettingsOpen);
   const setSettingsSection = useAppStore((state) => state.setSettingsSection);
   const setDeveloperMode = useAppStore((state) => state.setDeveloperMode);
   const setLogsVisible = useAppStore((state) => state.setLogsVisible);
@@ -152,39 +115,6 @@ export function LeftSidebar({
   useEffect(() => {
     setIma2SidecarBaseUrl(ima2SidecarSettings.baseUrl);
   }, [ima2SidecarSettings.baseUrl]);
-
-  const actions = [
-    {
-      label: isImporting ? "Importing" : "Import",
-      icon: <ImportIcon size={18} />,
-      onClick: onImportClick,
-      disabled: false,
-    },
-    {
-      label: "Frame All",
-      icon: <FrameAllIcon size={18} />,
-      onClick: frameAll,
-      disabled: false,
-    },
-    {
-      label: "Fit Selection",
-      icon: <FitSelectionIcon size={18} />,
-      onClick: frameSelection,
-      disabled: selectionCount === 0,
-    },
-    {
-      label: "Center",
-      icon: <CenterSelectionIcon size={18} />,
-      onClick: centerSelection,
-      disabled: selectionCount === 0,
-    },
-    {
-      label: "Reset Zoom",
-      icon: <ResetZoomIcon size={18} />,
-      onClick: resetZoom,
-      disabled: false,
-    },
-  ];
 
   const orderedAuthMethods = useMemo(
     () => orderProviderAuthMethods(["oauth", "api-key"]),
@@ -337,10 +267,6 @@ export function LeftSidebar({
     pushToast,
     reloadIma2SidecarSettings,
   ]);
-
-  const handleOpenSettings = (section: SettingsSurfaceSection) => {
-    setSettingsSection(section);
-  };
 
   const handleOpenAiAuthMethodChange = (authMethod: ProviderAuthMethod) => {
     setOpenAiAuthMethod(authMethod);
@@ -577,102 +503,55 @@ export function LeftSidebar({
   };
 
   return (
-    <aside className="left-sidebar">
-      <section className="left-sidebar__section">
-        <header className="left-sidebar__section-header">
-          <h2>Canvas</h2>
-        </header>
-        <div className="left-sidebar__actions">
-          {actions.map((action) => (
-            <button
-              key={action.label}
-              className="left-sidebar__action"
-              disabled={action.disabled}
-              onClick={action.onClick}
-            >
-              {action.icon}
-              <span>{action.label}</span>
-            </button>
-          ))}
-        </div>
-      </section>
+    <aside className="left-sidebar left-sidebar--settings">
+      <header className="inspector-panel__tabs settings-panel__tabs" aria-label="Settings sections">
+        <button
+          className={`inspector-panel__tab ${uiPreferences.settingsSection === "providers" ? "inspector-panel__tab--active" : ""}`}
+          onClick={() => setSettingsSection("providers")}
+        >
+          <span>Providers</span>
+        </button>
+        <button
+          className={`inspector-panel__tab ${uiPreferences.settingsSection === "developer" ? "inspector-panel__tab--active" : ""}`}
+          onClick={() => setSettingsSection("developer")}
+        >
+          <span>Developer</span>
+        </button>
+      </header>
 
-      <section className="left-sidebar__section">
-        <header className="left-sidebar__section-header">
-          <h2>Providers</h2>
-          <button className="left-sidebar__section-button" onClick={() => handleOpenSettings("providers")} title="Settings">
-            <SettingsIcon size={14} />
-          </button>
-        </header>
-
-        <div className="provider-list">
-          {providerEntries.map((entry) => (
-            <article
-              key={entry.familyId}
-              className={`provider-card ${entry.active ? "provider-card--active" : ""}`}
-            >
-              <div className="provider-card__body">
-                <div className="provider-card__header">
-                  <div>
-                    <strong>{entry.label}</strong>
+      <div className="settings-surface settings-surface--flat">
+        {uiPreferences.settingsSection === "providers" ? (
+          <div className="settings-surface__content">
+            <div className="provider-list">
+              {providerEntries.map((entry) => (
+                <article
+                  key={entry.familyId}
+                  className={`provider-card ${entry.active ? "provider-card--active" : ""}`}
+                >
+                  <div className="provider-card__body">
+                    <div className="provider-card__header">
+                      <div>
+                        <strong>{entry.label}</strong>
+                      </div>
+                      <ProviderStatePill availability={entry.availability} />
+                    </div>
                   </div>
-                  <ProviderStatePill availability={entry.availability} />
-                </div>
-              </div>
-              <div className="provider-card__actions">
-                <button
-                  className={`provider-card__action ${entry.active ? "active" : ""}`}
-                  disabled={!isProviderAvailabilitySelectable(entry.availability)}
-                  onClick={() => selectProviderFamily(entry.familyId)}
-                  title={entry.active ? "Active" : "Use"}
-                >
-                  <SparklesIcon size={14} />
-                </button>
-                <button
-                  className="provider-card__action"
-                  onClick={() => handleOpenSettings(entry.familyId === "mock" ? "developer" : "providers")}
-                  title="Configure"
-                >
-                  <SettingsIcon size={14} />
-                </button>
-              </div>
-            </article>
-          ))}
-        </div>
-      </section>
-
-      <section className="left-sidebar__section">
-        <header className="left-sidebar__section-header">
-          <h2>Settings</h2>
-          <button
-            className={`left-sidebar__section-button ${uiPreferences.settingsOpen ? 'active' : ''}`}
-            onClick={() => setSettingsOpen(!uiPreferences.settingsOpen)}
-            title={uiPreferences.settingsOpen ? "Close Settings" : "Open Settings"}
-          >
-            <SettingsIcon size={14} />
-            <span>{uiPreferences.settingsOpen ? "Close" : "Open"}</span>
-          </button>
-        </header>
-
-        {uiPreferences.settingsOpen ? (
-          <div className="settings-surface">
-            <div className="settings-surface__tabs">
-              <SettingTabButton
-                active={uiPreferences.settingsSection === "providers"}
-                icon={<SourceIcon size={14} />}
-                label="Providers"
-                onClick={() => handleOpenSettings("providers")}
-              />
-              <SettingTabButton
-                active={uiPreferences.settingsSection === "developer"}
-                icon={<CodeIcon size={14} />}
-                label="Developer"
-                onClick={() => handleOpenSettings("developer")}
-              />
+                  {!entry.active && isProviderAvailabilitySelectable(entry.availability) ? (
+                    <div className="provider-card__actions">
+                      <button
+                        className="provider-card__action"
+                        onClick={() => selectProviderFamily(entry.familyId)}
+                        title="Use provider"
+                      >
+                        <SparklesIcon size={14} />
+                        <span>Use</span>
+                      </button>
+                    </div>
+                  ) : null}
+                </article>
+              ))}
             </div>
 
-            {uiPreferences.settingsSection === "providers" ? (
-              <div className="settings-surface__content">
                 <label className="settings-field">
                   <span>Authentication</span>
                   <select
@@ -906,9 +785,7 @@ export function LeftSidebar({
                 </div>
               </div>
             ) : null}
-          </div>
-        ) : null}
-      </section>
+      </div>
     </aside>
   );
 }
