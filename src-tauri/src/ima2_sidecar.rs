@@ -935,21 +935,12 @@ fn build_oauth_request_body(
 ) -> Value {
     let quality = normalize_oauth_image_quality(request.settings.quality.as_deref());
     let moderation = normalize_oauth_image_moderation(request.settings.moderation.as_deref());
-    let is_edit = request.reference_images.len() == 1;
-    let mut tools = Vec::new();
-
-    if stream && !is_edit {
-        tools.push(json!({
-            "type": "web_search",
-        }));
-    }
-
-    tools.push(json!({
+    let tools = vec![json!({
         "type": "image_generation",
         "quality": quality,
         "size": size,
         "moderation": moderation
-    }));
+    })];
 
     let mut user_content = vec![json!({
         "type": "input_text",
@@ -976,7 +967,7 @@ fn build_oauth_request_body(
             }
         ],
         "tools": tools,
-        "tool_choice": if is_edit { "required" } else { "auto" },
+        "tool_choice": "required",
         "stream": stream
     })
 }
@@ -1209,6 +1200,15 @@ fn parse_json_response_for_image(
     Err(format!(
         "ChatGPT OAuth returned no image data.{response_summary}"
     ))
+}
+
+fn is_no_image_oauth_error(error: &str) -> bool {
+    error.contains("ChatGPT OAuth returned no image data")
+        || error.contains("ChatGPT OAuth stream ended without image data")
+}
+
+fn no_image_oauth_retry_error() -> String {
+    "ChatGPT OAuth returned no image data twice after retrying once.".to_string()
 }
 
 fn parse_proxy_port(base_url: &str) -> Result<u16, String> {
@@ -1701,16 +1701,37 @@ async fn send_request_with_cancel(
 }
 
 async fn read_response_text_with_cancel(
-    response: reqwest::Response,
+    mut response: reqwest::Response,
     cancel_rx: &mut watch::Receiver<bool>,
 ) -> Result<String, String> {
     if *cancel_rx.borrow() {
         return Err("cancelled".to_string());
     }
 
-    tokio::select! {
-        _ = cancel_rx.changed() => Err("cancelled".to_string()),
-        body = response.text() => body.map_err(|error| error.to_string()),
+    let mut body = Vec::new();
+
+    loop {
+        let chunk_result = tokio::select! {
+            _ = cancel_rx.changed() => return Err("cancelled".to_string()),
+            chunk = response.chunk() => chunk,
+        };
+
+        match chunk_result {
+            Ok(Some(chunk)) => body.extend_from_slice(&chunk),
+            Ok(None) => return Ok(String::from_utf8_lossy(&body).to_string()),
+            Err(error) => {
+                if body.is_empty() {
+                    return Err(error.to_string());
+                }
+
+                let partial_body = String::from_utf8_lossy(&body).to_string();
+                if partial_body.trim().is_empty() {
+                    return Err(error.to_string());
+                }
+
+                return Ok(partial_body);
+            }
+        }
     }
 }
 
@@ -1796,6 +1817,31 @@ async fn execute_single_oauth_request(
     parse_json_response_for_image(&fallback_body_text, fallback_request_id)
 }
 
+async fn execute_oauth_request_with_no_image_retry(
+    client: &Client,
+    base_url: &str,
+    request: &StartIma2SidecarGenerationRequest,
+    prompt: &str,
+    size: &str,
+    cancel_rx: &mut watch::Receiver<bool>,
+) -> Result<(String, String), String> {
+    match execute_single_oauth_request(client, base_url, request, prompt, size, cancel_rx).await {
+        Ok(result) => Ok(result),
+        Err(error) if error == "cancelled" => Err(error),
+        Err(error) if is_no_image_oauth_error(&error) => {
+            match execute_single_oauth_request(client, base_url, request, prompt, size, cancel_rx)
+                .await
+            {
+                Ok(result) => Ok(result),
+                Err(error) if error == "cancelled" => Err(error),
+                Err(error) if is_no_image_oauth_error(&error) => Err(no_image_oauth_retry_error()),
+                Err(error) => Err(error),
+            }
+        }
+        Err(error) => Err(error),
+    }
+}
+
 async fn execute_ima2_sidecar_request(
     app: &AppHandle,
     base_url: &str,
@@ -1816,9 +1862,21 @@ async fn execute_ima2_sidecar_request(
     let mut request_ids = Vec::with_capacity(image_count as usize);
 
     for index in 0..image_count {
-        let (request_id, payload) =
-            execute_single_oauth_request(&client, base_url, request, &prompt, size, &mut cancel_rx)
-                .await?;
+        let (request_id, payload) = match execute_oauth_request_with_no_image_retry(
+            &client,
+            base_url,
+            request,
+            &prompt,
+            size,
+            &mut cancel_rx,
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(error) if error == "cancelled" => return Err(error),
+            Err(error) if images.is_empty() => return Err(error),
+            Err(_) => return Ok((images, request_ids)),
+        };
         let (mime_type, bytes) = parse_generated_image_payload(&payload)?;
         let (detected_width, detected_height) =
             image_dimensions_from_bytes(&bytes).unwrap_or((width, height));
@@ -2231,6 +2289,7 @@ pub async fn cancel_ima2_sidecar_generation(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Read as _;
 
     #[test]
     fn extracts_generated_images_from_responses_payload() {
@@ -2259,6 +2318,55 @@ mod tests {
         let (mime_type, _bytes) =
             parse_generated_image_payload(&raw).expect("raw base64 should parse");
         assert_eq!(mime_type, "image/png");
+    }
+
+    #[test]
+    fn recognizes_no_image_oauth_errors_for_single_retry() {
+        assert!(is_no_image_oauth_error(
+            "ChatGPT OAuth returned no image data."
+        ));
+        assert!(is_no_image_oauth_error(
+            "ChatGPT OAuth stream ended without image data."
+        ));
+        assert!(!is_no_image_oauth_error("error decoding response body"));
+        assert!(no_image_oauth_retry_error().contains("twice"));
+    }
+
+    #[tokio::test]
+    async fn preserves_partial_stream_body_when_connection_ends_badly() {
+        let body = "data: {\"response\":{\"id\":\"resp_partial\"}}\n\n".to_string();
+        let expected_body = body.clone();
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("test listener");
+        let address = listener.local_addr().expect("test listener address");
+
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("test connection");
+            let mut request_buffer = [0_u8; 1024];
+            let _ = stream.read(&mut request_buffer);
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n{:x}\r\n{}\r\n",
+                body.len(),
+                body
+            )
+            .expect("write truncated chunked response");
+        });
+
+        let response = Client::new()
+            .get(format!("http://{address}"))
+            .send()
+            .await
+            .expect("test response");
+        let (_cancel_tx, mut cancel_rx) = watch::channel(false);
+
+        assert_eq!(
+            read_response_text_with_cancel(response, &mut cancel_rx)
+                .await
+                .expect("partial body should be returned"),
+            expected_body
+        );
+
+        server.join().expect("test server exits");
     }
 
     #[test]
@@ -2608,12 +2716,12 @@ mod tests {
         let body = build_oauth_request_body(&request, "prompt", "1024x1024", true);
 
         assert_eq!(body["model"], OAUTH_IMAGE_MODEL);
-        assert_eq!(body["tool_choice"], "auto");
-        assert_eq!(body["tools"][0]["type"], "web_search");
-        assert_eq!(body["tools"][1]["type"], "image_generation");
-        assert_eq!(body["tools"][1]["quality"], "high");
-        assert_eq!(body["tools"][1]["moderation"], "auto");
-        assert_eq!(body["tools"][1]["size"], "1024x1024");
+        assert_eq!(body["tool_choice"], "required");
+        assert_eq!(body["tools"].as_array().expect("tools array").len(), 1);
+        assert_eq!(body["tools"][0]["type"], "image_generation");
+        assert_eq!(body["tools"][0]["quality"], "high");
+        assert_eq!(body["tools"][0]["moderation"], "auto");
+        assert_eq!(body["tools"][0]["size"], "1024x1024");
     }
 
     #[test]

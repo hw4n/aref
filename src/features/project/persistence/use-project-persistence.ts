@@ -17,7 +17,7 @@ import type { RecentProjectRecord } from "./types";
 
 const AUTOSAVE_DEBOUNCE_MS = 3000;
 
-type PersistenceStatus = "idle" | "loading" | "saving" | "saved" | "error";
+type PersistenceStatus = "idle" | "loading" | "saving" | "saved" | "modified" | "error";
 
 function createProjectFingerprint(projectId: string, updatedAt: string, assetCount: number) {
   return `${projectId}:${updatedAt}:${assetCount}`;
@@ -64,6 +64,32 @@ export function useProjectPersistence() {
     const entries = await listRecentProjects();
     setRecentProjects(entries);
   }, []);
+
+  const saveAutosaveSnapshot = useCallback(
+    async (projectToSave: typeof project, projectPath: string | null, fingerprint: string) => {
+      if (!hasTauriRuntime()) {
+        return false;
+      }
+
+      if (fingerprint === lastAutosavedFingerprintRef.current) {
+        return true;
+      }
+
+      try {
+        setStatus("saving");
+        await saveAutosaveProject(projectToSave, projectPath);
+        lastAutosavedFingerprintRef.current = fingerprint;
+        setError(null);
+        setStatus("saved");
+        return true;
+      } catch (nextError) {
+        setStatus("error");
+        setError(nextError instanceof Error ? nextError.message : "Failed to autosave project.");
+        return false;
+      }
+    },
+    [],
+  );
 
   const replaceProjectAndResetAutosave = useCallback(
     (nextProject: typeof project, nextProjectPath: string | null) => {
@@ -182,6 +208,21 @@ export function useProjectPersistence() {
     }
   }, [currentProjectPath, markProjectPersisted, project, saveProjectAs]);
 
+  const saveAutosaveNow = useCallback(async () => {
+    if (!isReady) {
+      return false;
+    }
+
+    const currentProject = appStore.getState().project;
+    const currentFingerprint = createProjectFingerprint(
+      currentProject.id,
+      currentProject.updatedAt,
+      Object.keys(currentProject.assets).length,
+    );
+
+    return saveAutosaveSnapshot(currentProject, currentProjectPath, currentFingerprint);
+  }, [currentProjectPath, isReady, saveAutosaveSnapshot]);
+
   useEffect(() => {
     let active = true;
 
@@ -267,20 +308,23 @@ export function useProjectPersistence() {
         return;
       }
 
-      try {
-        setStatus("saving");
-        await saveAutosaveProject(autosaveProject, currentProjectPath);
-        lastAutosavedFingerprintRef.current = autosaveFingerprint;
-        setError(null);
-        setStatus("saved");
-      } catch (nextError) {
-        setStatus("error");
-        setError(nextError instanceof Error ? nextError.message : "Failed to autosave project.");
-      }
+      await saveAutosaveSnapshot(autosaveProject, currentProjectPath, autosaveFingerprint);
     }, AUTOSAVE_DEBOUNCE_MS);
 
     return () => window.clearTimeout(timeoutId);
-  }, [currentProjectPath, isCanvasInteractionActive, isReady, projectFingerprint]);
+  }, [currentProjectPath, isCanvasInteractionActive, isReady, projectFingerprint, saveAutosaveSnapshot]);
+
+  const effectiveStatus = useMemo<PersistenceStatus>(() => {
+    if (
+      isReady
+      && (status === "idle" || status === "saved")
+      && projectFingerprint !== lastAutosavedFingerprintRef.current
+    ) {
+      return "modified";
+    }
+
+    return status;
+  }, [isReady, projectFingerprint, status]);
 
   return {
     currentProjectPath,
@@ -288,11 +332,12 @@ export function useProjectPersistence() {
     isDesktopPersistenceAvailable: hasTauriRuntime(),
     isReady,
     recentProjects,
-    status,
+    status: effectiveStatus,
     createNewProject,
     openProject,
     openRecentProject,
     saveProject,
     saveProjectAs,
+    saveAutosaveNow,
   };
 }

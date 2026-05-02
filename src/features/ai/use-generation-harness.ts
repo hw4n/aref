@@ -6,6 +6,10 @@ import { useAppStore } from "@/state/app-store";
 
 const activeGenerationControllers = new Map<string, AbortController>();
 
+interface UseGenerationHarnessOptions {
+  onGenerationCompleted?: () => Promise<unknown> | unknown;
+}
+
 function isAbortError(error: unknown) {
   return error instanceof Error && error.name === "AbortError";
 }
@@ -14,7 +18,8 @@ function getMissingReferenceIds(request: GenerationRequest, assets: Record<strin
   return request.selectedAssetIds.filter((assetId) => !assets[assetId]);
 }
 
-export function useGenerationHarness() {
+export function useGenerationHarness(options: UseGenerationHarnessOptions = {}) {
+  const { onGenerationCompleted } = options;
   const project = useAppStore((state) => state.project);
   const cancelGenerationJobState = useAppStore((state) => state.cancelGenerationJob);
   const completeGenerationJob = useAppStore((state) => state.completeGenerationJob);
@@ -102,6 +107,7 @@ export function useGenerationHarness() {
         );
 
         const generatedAssetIds = completeGenerationJob(jobId, result);
+        await onGenerationCompleted?.();
         appendDiagnosticLog({
           level: "info",
           scope: "generation",
@@ -160,6 +166,7 @@ export function useGenerationHarness() {
       pushToast,
       queueGenerationJob,
       runGenerationJob,
+      onGenerationCompleted,
     ],
   );
 

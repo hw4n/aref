@@ -114,11 +114,14 @@ export function AppShell() {
     openProject,
     openRecentProject,
     recentProjects,
+    saveAutosaveNow,
     saveProject,
     saveProjectAs,
     status: persistenceStatus,
   } = useProjectPersistence();
-  const { submitGeneration, cancelGeneration, rerunGeneration } = useGenerationHarness();
+  const { submitGeneration, cancelGeneration, rerunGeneration } = useGenerationHarness({
+    onGenerationCompleted: saveAutosaveNow,
+  });
   const providerManagement = useProviderManagement();
   const showGenerationSheet = shouldShowContextualGenerationSheet(selectionCount, isGenerationSheetExplicitlyOpened);
 
@@ -333,6 +336,21 @@ export function AppShell() {
     () => getProjectDisplayName(projectName, currentProjectPath),
     [currentProjectPath, projectName],
   );
+  const persistenceStatusLabel = useMemo(() => {
+    switch (persistenceStatus) {
+      case "idle":
+      case "saved":
+        return "Saved";
+      case "modified":
+        return "Unsaved";
+      case "saving":
+        return "Saving";
+      case "loading":
+        return "Loading";
+      case "error":
+        return "Save failed";
+    }
+  }, [persistenceStatus]);
   const workspaceError = importError ?? persistenceError;
   const projectActionItems = [
     {
@@ -655,7 +673,7 @@ export function AppShell() {
           <div className="workspace__header-right">
             <div className="workspace__path-status">
               <span className={`workspace__status workspace__status--${persistenceStatus}`}>
-                {persistenceStatus === "idle" ? "Saved" : persistenceStatus}
+                {persistenceStatusLabel}
               </span>
               <span className="workspace__path" title={currentProjectPath || "Draft"}>
                 {currentProjectPath ? currentProjectPath.split(/[\\/]/).at(-1) : "Draft"}

@@ -1970,6 +1970,26 @@ button:disabled {
   box-shadow: 0 0 8px rgba(142, 216, 143, 0.55);
 }
 
+.workspace__status--modified {
+  color: #f2c46d;
+}
+
+.workspace__status--modified::after {
+  background: #f2c46d;
+  box-shadow: 0 0 8px rgba(242, 196, 109, 0.45);
+}
+
+.workspace__status--saving,
+.workspace__status--loading {
+  color: #8fbaf4;
+}
+
+.workspace__status--saving::after,
+.workspace__status--loading::after {
+  background: #8fbaf4;
+  box-shadow: 0 0 8px rgba(143, 186, 244, 0.45);
+}
+
 .workspace__status--error {
   color: var(--danger);
 }
