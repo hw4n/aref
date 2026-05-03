@@ -15,7 +15,7 @@ import {
   SourceIcon,
   SparklesIcon,
 } from "@/components/icons/ui-icons";
-import type { AssetItem } from "@/domain/assets/types";
+import { isImageAsset, type AssetItem } from "@/domain/assets/types";
 import type {
   GenerationImageSize,
   GenerationImageQuality,
@@ -90,11 +90,9 @@ export function ContextualGenerationSheet({
     const referenceAssetIds = state.generationDraft.pinnedAssetIds ?? state.project.selection.assetIds;
     return referenceAssetIds
       .map((assetId) => state.project.assets[assetId])
-      .filter((asset): asset is AssetItem => Boolean(asset));
+      .filter((asset): asset is AssetItem => Boolean(asset) && isImageAsset(asset));
   });
-  const referenceAssetIds = useAppStore(
-    (state) => state.generationDraft.pinnedAssetIds ?? state.project.selection.assetIds,
-  );
+  const referenceAssetIds = referenceAssets.map((asset) => asset.id);
   const centerSelection = useAppStore((state) => state.centerSelection);
   const frameSelection = useAppStore((state) => state.frameSelection);
   const groupSelection = useAppStore((state) => state.groupSelection);

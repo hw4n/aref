@@ -1,5 +1,6 @@
 import { useCallback, useEffect } from "react";
 
+import { isImageAsset } from "@/domain/assets/types";
 import type { GenerationRequest } from "@/domain/jobs/types";
 import { getGenerationProvider, listGenerationProviders } from "@/services/providers/provider-registry";
 import { useAppStore } from "@/state/app-store";
@@ -72,14 +73,19 @@ export function useGenerationHarness(options: UseGenerationHarnessOptions = {}) 
 
       const referenceAssets = request.selectedAssetIds
         .map((assetId) => project.assets[assetId])
-        .filter(Boolean);
+        .filter((asset) => Boolean(asset) && isImageAsset(asset));
+      const imageReferenceIds = referenceAssets.map((asset) => asset.id);
+      const imageRequest = {
+        ...request,
+        selectedAssetIds: imageReferenceIds,
+      };
 
-      const jobId = queueGenerationJob(request, retryJobId);
+      const jobId = queueGenerationJob(imageRequest, retryJobId);
       appendDiagnosticLog({
         level: "info",
         scope: "generation",
         title: "Generation queued",
-        message: `${provider.label} queued with ${request.selectedAssetIds.length} refs.`,
+        message: `${provider.label} queued with ${imageReferenceIds.length} refs.`,
         details: `Model: ${request.model}. Prompt length: ${request.prompt.length}.`,
       });
       const controller = new AbortController();
@@ -89,7 +95,7 @@ export function useGenerationHarness(options: UseGenerationHarnessOptions = {}) 
         const result = await provider.generateImages(
           {
             jobId,
-            request,
+            request: imageRequest,
             referenceAssets,
           },
           {

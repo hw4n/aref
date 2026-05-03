@@ -2,11 +2,16 @@ import { useEffect, useState } from "react";
 
 import { useRenderableImageUrl } from "@/features/images/hooks/use-renderable-image-url";
 
-export function useHtmlImage(src: string) {
+export function useHtmlImage(src: string | null) {
   const [image, setImage] = useState<HTMLImageElement | null>(null);
-  const renderableSrc = useRenderableImageUrl(src);
+  const renderableSrc = useRenderableImageUrl(src ?? "");
 
   useEffect(() => {
+    if (!src) {
+      setImage(null);
+      return;
+    }
+
     const nextImage = new window.Image();
     nextImage.crossOrigin = "anonymous";
     nextImage.onload = () => setImage(nextImage);
@@ -17,7 +22,7 @@ export function useHtmlImage(src: string) {
     return () => {
       nextImage.onload = null;
     };
-  }, [renderableSrc]);
+  }, [renderableSrc, src]);
 
   return image;
 }

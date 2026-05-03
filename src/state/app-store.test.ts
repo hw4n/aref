@@ -301,6 +301,65 @@ describe("app store", () => {
     expect(importedAsset?.scale).toBeLessThan(1);
   });
 
+  it("adds and edits text assets as selectable canvas items", () => {
+    const store = createAppStore();
+    store.getState().setViewportSize(1200, 800);
+
+    const textAssetId = store.getState().addTextAsset();
+    const textAsset = store.getState().project.assets[textAssetId];
+
+    expect(store.getState().project.selection.assetIds).toEqual([textAssetId]);
+    expect(store.getState().editingTextAssetId).toBe(textAssetId);
+    expect(textAsset).toMatchObject({
+      kind: "text",
+      sourceName: "Text Layer",
+      imagePath: "",
+      text: {
+        value: "Text",
+        fontFamily: "Segoe UI",
+      },
+    });
+    expect(textAsset?.width).toBeLessThan(160);
+
+    store.getState().updateTextAsset(textAssetId, {
+      value: "Caption",
+      fontFamily: "Arial",
+      fontSize: 56,
+      fill: "#ffdf6e",
+    });
+
+    expect(store.getState().project.assets[textAssetId]).toMatchObject({
+      kind: "text",
+      text: {
+        value: "Caption",
+        fontFamily: "Arial",
+        fontSize: 56,
+        fill: "#ffdf6e",
+      },
+    });
+  });
+
+  it("collapses text transform scale into the displayed font size", () => {
+    const store = createAppStore();
+    const textAssetId = store.getState().addTextAsset();
+    const initialAsset = store.getState().project.assets[textAssetId]!;
+
+    store.getState().commitAssetTransforms([
+      {
+        id: textAssetId,
+        x: initialAsset.x,
+        y: initialAsset.y,
+        rotation: initialAsset.rotation,
+        scale: 1.5,
+      },
+    ]);
+
+    const transformedAsset = store.getState().project.assets[textAssetId]!;
+    expect(transformedAsset.scale).toBe(1);
+    expect(transformedAsset.width).toBeCloseTo(initialAsset.width * 1.5);
+    expect(transformedAsset.text?.fontSize).toBeCloseTo(initialAsset.text!.fontSize * 1.5);
+  });
+
   it("marks the project updated when camera movement changes the saved view", () => {
     const store = createAppStore();
     store.getState().replaceProject({

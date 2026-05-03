@@ -10,7 +10,11 @@ import {
 import { createGeneratedAssets } from "@/domain/assets/generated-asset-utils";
 import { createImportedAssets, type ImportedImageDraft } from "@/domain/assets/imported-asset-utils";
 import { getAssetsBounds } from "@/domain/assets/asset-geometry";
-import type { AssetItem } from "@/domain/assets/types";
+import {
+  createTextAsset,
+  updateTextAsset as applyTextAssetUpdate,
+} from "@/domain/assets/text-asset-utils";
+import type { AssetItem, TextAssetContent } from "@/domain/assets/types";
 import {
   applyZoomAtPoint,
   centerRect,
@@ -68,6 +72,7 @@ export interface AppStoreState {
   project: Project;
   isSpacePressed: boolean;
   isCanvasInteractionActive: boolean;
+  editingTextAssetId: string | null;
   toasts: ToastMessage[];
   generationDraft: GenerationSheetDraft;
   uiPreferences: AppUiPreferences;
@@ -82,6 +87,10 @@ export interface AppStoreState {
   };
   replaceProject: (project: Project) => void;
   importAssets: (drafts: ImportedImageDraft[]) => void;
+  addTextAsset: () => string;
+  updateTextAsset: (assetId: string, update: Partial<TextAssetContent>) => void;
+  beginTextEditing: (assetId: string) => void;
+  finishTextEditing: () => void;
   setViewportSize: (viewportWidth: number, viewportHeight: number) => void;
   panCameraBy: (deltaX: number, deltaY: number) => void;
   setCameraPosition: (position: Point) => void;
@@ -378,6 +387,7 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
     project: initialProject,
     isSpacePressed: false,
     isCanvasInteractionActive: false,
+    editingTextAssetId: null,
     toasts: [],
     generationDraft: createDefaultGenerationDraft(),
     uiPreferences: getDefaultAppUiPreferences(),
@@ -393,6 +403,7 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
     replaceProject: (project) => {
       set({
         project,
+        editingTextAssetId: null,
         generationDraft: createDefaultGenerationDraft(),
         visibilityHistory: {
           undoStack: [],
@@ -425,8 +436,71 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
               lastActiveAssetId: importedAssets.at(-1)?.id ?? null,
             },
           }),
+          editingTextAssetId: null,
           generationDraft: resetGenerationSheetContext(state.generationDraft),
         });
+      });
+    },
+    addTextAsset: () => {
+      const currentState = get();
+      const textAsset = createTextAsset(currentState.project.assets, currentState.project.camera);
+
+      set((state) =>
+        pushProjectHistory(state, {
+          project: bumpProject({
+            ...state.project,
+            assets: {
+              ...state.project.assets,
+              [textAsset.id]: textAsset,
+            },
+            selection: {
+              assetIds: [textAsset.id],
+              marquee: null,
+              lastActiveAssetId: textAsset.id,
+            },
+          }),
+          editingTextAssetId: textAsset.id,
+          generationDraft: resetGenerationSheetContext(state.generationDraft),
+        }),
+      );
+
+      return textAsset.id;
+    },
+    updateTextAsset: (assetId, update) => {
+      set((state) => {
+        const asset = state.project.assets[assetId];
+
+        if (!asset || asset.kind !== "text") {
+          return state;
+        }
+
+        return pushProjectHistory(state, {
+          project: bumpProject({
+            ...state.project,
+            assets: {
+              ...state.project.assets,
+              [assetId]: applyTextAssetUpdate(asset, update),
+            },
+          }),
+        });
+      });
+    },
+    beginTextEditing: (assetId) => {
+      set((state) => {
+        const asset = state.project.assets[assetId];
+
+        if (!asset || asset.kind !== "text" || asset.locked) {
+          return state;
+        }
+
+        return {
+          editingTextAssetId: assetId,
+        };
+      });
+    },
+    finishTextEditing: () => {
+      set({
+        editingTextAssetId: null,
       });
     },
     setViewportSize: (viewportWidth, viewportHeight) => {
@@ -565,6 +639,9 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
               lastActiveAssetId: visibleAssetIds.at(-1) ?? null,
             },
           },
+          editingTextAssetId: visibleAssetIds.length === 1 && state.editingTextAssetId === visibleAssetIds[0]
+            ? state.editingTextAssetId
+            : null,
           generationDraft: resetGenerationSheetContext(state.generationDraft),
         };
       });
@@ -587,6 +664,9 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
               lastActiveAssetId: assetId,
             },
           },
+          editingTextAssetId: assetIds.length === 1 && state.editingTextAssetId === assetIds[0]
+            ? state.editingTextAssetId
+            : null,
           generationDraft: resetGenerationSheetContext(state.generationDraft),
         };
       });
@@ -607,6 +687,9 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
               lastActiveAssetId: nextAssetIds.at(-1) ?? null,
             },
           },
+          editingTextAssetId: nextAssetIds.length === 1 && state.editingTextAssetId === nextAssetIds[0]
+            ? state.editingTextAssetId
+            : null,
           generationDraft: resetGenerationSheetContext(state.generationDraft),
         };
       });
@@ -621,6 +704,7 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
             lastActiveAssetId: null,
           },
         },
+        editingTextAssetId: null,
         generationDraft: resetGenerationSheetContext(state.generationDraft),
       }));
     },
@@ -742,6 +826,22 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
 
               if (asset.locked) {
                 return asset;
+              }
+
+              if (asset.kind === "text" && asset.text) {
+                const nextScale = Math.max(0.05, next.scale);
+                const resizedAsset = {
+                  ...asset,
+                  x: next.x,
+                  y: next.y,
+                  rotation: next.rotation,
+                  scale: 1,
+                  width: Math.max(32, asset.width * nextScale),
+                };
+
+                return applyTextAssetUpdate(resizedAsset, {
+                  fontSize: asset.text.fontSize * nextScale,
+                });
               }
 
               return {
@@ -1033,6 +1133,7 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
 
         return {
           project: previousProject,
+          editingTextAssetId: null,
           generationDraft: resetGenerationSheetContext(state.generationDraft),
           visibilityHistory: {
             undoStack: [],
@@ -1055,6 +1156,7 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
 
         return {
           project: nextProject,
+          editingTextAssetId: null,
           generationDraft: resetGenerationSheetContext(state.generationDraft),
           visibilityHistory: {
             undoStack: [],
@@ -1267,6 +1369,7 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
               lastActiveAssetId: duplicates.at(-1)?.id ?? null,
             },
           }),
+          editingTextAssetId: null,
           generationDraft: resetGenerationSheetContext(state.generationDraft),
         });
       });
@@ -1300,6 +1403,7 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
               lastActiveAssetId: null,
             },
           }),
+          editingTextAssetId: null,
           generationDraft: resetGenerationSheetContext(state.generationDraft),
         });
       });
@@ -1412,6 +1516,7 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
             lastActiveAssetId: generatedAssetIds.at(-1) ?? null,
           },
         }),
+        editingTextAssetId: null,
       }));
 
       return generatedAssetIds;

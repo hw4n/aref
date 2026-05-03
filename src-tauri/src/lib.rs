@@ -4,6 +4,7 @@ mod image_metadata;
 mod openai_provider;
 mod project_persistence;
 mod provider_logs;
+mod system_fonts;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -22,6 +23,7 @@ pub fn run() {
             project_persistence::save_autosave_project,
             project_persistence::load_startup_project,
             project_persistence::list_recent_projects,
+            system_fonts::list_system_fonts,
             provider_logs::list_provider_request_logs,
             openai_provider::get_openai_settings,
             openai_provider::save_openai_settings,

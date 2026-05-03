@@ -13,7 +13,14 @@ import {
   SparklesIcon,
 } from "@/components/icons/ui-icons";
 import { getAssetBounds } from "@/domain/assets/asset-geometry";
-import type { AssetItem } from "@/domain/assets/types";
+import {
+  isImageAsset,
+  isTextAsset,
+  type AssetItem,
+  type TextAssetContent,
+  type TextAssetItem,
+} from "@/domain/assets/types";
+import type { CameraState } from "@/domain/camera/types";
 import { screenToWorld } from "@/domain/camera/camera-math";
 import {
   computeGenerationCanvasLayout,
@@ -33,6 +40,7 @@ import {
   getRotationSnapAngles,
 } from "@/features/canvas/utils/rotation-snaps";
 import { isLikelyFilePath } from "@/features/project/persistence/project-io";
+import { TextStylePanel } from "@/features/text/components/TextStylePanel";
 import { useAppStore } from "@/state/app-store";
 import {
   selectActiveGenerationJobs,
@@ -47,12 +55,14 @@ interface AssetLayerItemProps {
   isSelected: boolean;
   isPanMode: boolean;
   onSelect: (assetId: string, additive: boolean) => void;
+  onEditText: (assetId: string) => void;
   onContextMenu: (assetId: string, clientPosition: Point, isSelected: boolean, additive: boolean) => void;
   onInteractionActiveChange: (active: boolean) => void;
   onBeginDrag: (assetId: string, position: Point) => void;
   onDrag: (assetId: string, position: Point) => void;
   onEndDrag: (assetId: string, position: Point) => void;
   setNodeRef: (assetId: string, node: Konva.Group | null) => void;
+  isEditing: boolean;
 }
 
 interface DragSession {
@@ -85,6 +95,10 @@ function getAssetInitial(asset: AssetItem) {
 }
 
 function getAssetThumbnailSource(asset: AssetItem) {
+  if (!isImageAsset(asset)) {
+    return null;
+  }
+
   return asset.thumbnailPath ?? (isLikelyFilePath(asset.imagePath) ? null : asset.imagePath);
 }
 
@@ -409,14 +423,17 @@ function AssetLayerItem({
   isSelected,
   isPanMode,
   onSelect,
+  onEditText,
   onContextMenu,
   onInteractionActiveChange,
   onBeginDrag,
   onDrag,
   onEndDrag,
   setNodeRef,
+  isEditing,
 }: AssetLayerItemProps) {
-  const image = useHtmlImage(asset.imagePath);
+  const isText = isTextAsset(asset);
+  const image = useHtmlImage(isText ? null : asset.imagePath);
   const width = asset.width * asset.scale;
   const height = asset.height * asset.scale;
   const suppressClickAfterDragRef = useRef(false);
@@ -461,6 +478,15 @@ function AssetLayerItem({
 
         onSelect(asset.id, isAdditiveSelectionModifier(mouseEvent));
       }}
+      onDblClick={(event) => {
+        if (!isText || isPanMode || asset.locked) {
+          return;
+        }
+
+        event.cancelBubble = true;
+        onSelect(asset.id, false);
+        onEditText(asset.id);
+      }}
       onTap={(event) => {
         if (isPanMode) {
           return;
@@ -472,6 +498,15 @@ function AssetLayerItem({
         }
 
         onSelect(asset.id, false);
+      }}
+      onDblTap={(event) => {
+        if (!isText || isPanMode || asset.locked) {
+          return;
+        }
+
+        event.cancelBubble = true;
+        onSelect(asset.id, false);
+        onEditText(asset.id);
       }}
       onContextMenu={(event) => {
         event.evt.preventDefault();
@@ -521,18 +556,34 @@ function AssetLayerItem({
       }}
     >
       <Rect
-        x={-width / 2 - 8}
-        y={-height / 2 - 8}
-        width={width + 16}
-        height={height + 16}
+        x={isText ? -width / 2 : -width / 2 - 8}
+        y={isText ? -height / 2 : -height / 2 - 8}
+        width={isText ? width : width + 16}
+        height={isText ? height : height + 16}
         cornerRadius={2}
-        fill="rgba(255, 255, 255, 0.01)"
-        stroke={isSelected ? "#7f96ff" : "rgba(255,255,255,0.06)"}
-        strokeWidth={isSelected ? 2 : 1}
-        shadowBlur={isSelected ? 12 : 4}
+        fill={isText ? "rgba(255, 255, 255, 0.001)" : "rgba(255, 255, 255, 0.01)"}
+        stroke={isText ? "rgba(255,255,255,0)" : isSelected ? "#7f96ff" : "rgba(255,255,255,0.06)"}
+        strokeWidth={isText ? 0 : isSelected ? 2 : 1}
+        shadowBlur={isText ? 0 : isSelected ? 12 : 4}
         shadowColor={isSelected ? "rgba(127, 150, 255, 0.35)" : "rgba(0,0,0,0.2)"}
       />
-      {image ? (
+      {isText ? (
+        <Text
+          x={-width / 2}
+          y={-height / 2}
+          width={width}
+          height={height}
+          text={asset.text.value}
+          fontFamily={asset.text.fontFamily}
+          fontSize={asset.text.fontSize * asset.scale}
+          fontStyle={asset.text.fontStyle}
+          fill={asset.text.fill}
+          align={asset.text.align}
+          lineHeight={asset.text.lineHeight}
+          wrap="word"
+          opacity={isEditing ? 0.22 : 1}
+        />
+      ) : image ? (
         <KonvaImage
           image={image}
           x={-width / 2}
@@ -554,6 +605,69 @@ function AssetLayerItem({
         />
       )}
     </Group>
+  );
+}
+
+function TextEditOverlay({
+  asset,
+  camera,
+  onFinish,
+  onUpdate,
+}: {
+  asset: TextAssetItem;
+  camera: CameraState;
+  onFinish: () => void;
+  onUpdate: (update: Partial<TextAssetContent>) => void;
+}) {
+  const editorRef = useRef<HTMLTextAreaElement | null>(null);
+  const width = Math.max(48, asset.width * asset.scale * camera.zoom);
+  const height = Math.max(32, asset.height * asset.scale * camera.zoom);
+  const left = camera.x + asset.x * camera.zoom - width / 2;
+  const top = camera.y + asset.y * camera.zoom - height / 2;
+
+  useEffect(() => {
+    const editor = editorRef.current;
+
+    if (!editor) {
+      return;
+    }
+
+    editor.focus();
+    editor.setSelectionRange(0, editor.value.length);
+  }, [asset.id]);
+
+  return (
+    <textarea
+      ref={editorRef}
+      className="canvas-text-editor"
+      spellCheck={false}
+      style={{
+        left,
+        top,
+        width,
+        height,
+        color: asset.text.fill,
+        fontFamily: asset.text.fontFamily,
+        fontSize: asset.text.fontSize * asset.scale * camera.zoom,
+        fontStyle: asset.text.fontStyle.includes("italic") ? "italic" : "normal",
+        fontWeight: asset.text.fontStyle.includes("bold") ? 700 : 400,
+        lineHeight: asset.text.lineHeight,
+        textAlign: asset.text.align,
+        transform: `rotate(${asset.rotation}deg)`,
+      }}
+      value={asset.text.value}
+      onBlur={onFinish}
+      onChange={(event) => onUpdate({ value: event.currentTarget.value })}
+      onKeyDown={(event) => {
+        event.stopPropagation();
+        if (event.key === "Escape" || ((event.ctrlKey || event.metaKey) && event.key === "Enter")) {
+          event.preventDefault();
+          onFinish();
+        }
+      }}
+      onPointerDown={(event) => event.stopPropagation()}
+      onWheel={(event) => event.stopPropagation()}
+    />
   );
 }
 
@@ -595,7 +709,9 @@ export function CanvasStage() {
   );
   const undoVisibilityCount = useAppStore((state) => state.visibilityHistory.undoStack.length);
   const redoVisibilityCount = useAppStore((state) => state.visibilityHistory.redoStack.length);
+  const editingTextAssetId = useAppStore((state) => state.editingTextAssetId);
   const marquee = useAppStore((state) => state.project.selection.marquee);
+  const beginTextEditing = useAppStore((state) => state.beginTextEditing);
   const clearSelection = useAppStore((state) => state.clearSelection);
   const centerSelection = useAppStore((state) => state.centerSelection);
   const commitAssetTransforms = useAppStore((state) => state.commitAssetTransforms);
@@ -616,6 +732,8 @@ export function CanvasStage() {
   const setCameraPosition = useAppStore((state) => state.setCameraPosition);
   const setAssetPosition = useAppStore((state) => state.setAssetPosition);
   const setAssetPositions = useAppStore((state) => state.setAssetPositions);
+  const updateTextAsset = useAppStore((state) => state.updateTextAsset);
+  const finishTextEditing = useAppStore((state) => state.finishTextEditing);
   const setGenerationDraft = useAppStore((state) => state.setGenerationDraft);
   const setGenerationJobCanvasPlacement = useAppStore((state) => state.setGenerationJobCanvasPlacement);
   const setCanvasInteractionActive = useAppStore((state) => state.setCanvasInteractionActive);
@@ -715,12 +833,45 @@ export function CanvasStage() {
   });
 
   const selectedAssetSet = useMemo(() => new Set(selectedAssetIds), [selectedAssetIds]);
+  const selectedTextAsset = useMemo(() => {
+    if (selectedAssetIds.length !== 1) {
+      return null;
+    }
+
+    const asset = assetRegistry[selectedAssetIds[0]!];
+    return asset && isTextAsset(asset) ? asset : null;
+  }, [assetRegistry, selectedAssetIds]);
+  const editingTextAsset = useMemo(() => {
+    if (!editingTextAssetId) {
+      return null;
+    }
+
+    const asset = assetRegistry[editingTextAssetId];
+    return asset && isTextAsset(asset) && !asset.hidden ? asset : null;
+  }, [assetRegistry, editingTextAssetId]);
   const assetMap = useMemo(
     () => Object.fromEntries(assets.map((asset) => [asset.id, asset])),
     [assets],
   );
   const visibleAssetNodeKey = useMemo(
-    () => assets.map((asset) => `${asset.id}:${asset.locked ? "1" : "0"}`).join("|"),
+    () =>
+      assets
+        .map((asset) => {
+          const textSignature = isTextAsset(asset)
+            ? `${asset.text.value}:${asset.text.fontFamily}:${asset.text.fontSize}:${asset.text.fontStyle}:${asset.text.align}:${asset.text.lineHeight}`
+            : "";
+
+          return [
+            asset.id,
+            asset.locked ? "1" : "0",
+            asset.width,
+            asset.height,
+            asset.scale,
+            asset.rotation,
+            textSignature,
+          ].join(":");
+        })
+        .join("|"),
     [assets],
   );
   const zoomLabel = `${Math.round(camera.zoom * 100)}%`;
@@ -752,6 +903,12 @@ export function CanvasStage() {
   useEffect(() => {
     assetMapRef.current = assetMap;
   }, [assetMap]);
+
+  useEffect(() => {
+    if (editingTextAssetId && !editingTextAsset) {
+      finishTextEditing();
+    }
+  }, [editingTextAsset, editingTextAssetId, finishTextEditing]);
 
   useEffect(() => {
     if (size.width > 0 && size.height > 0) {
@@ -839,7 +996,15 @@ export function CanvasStage() {
       .filter((node): node is Konva.Group => Boolean(node));
 
     transformer.nodes(nodes);
+    transformer.forceUpdate();
     transformer.getLayer()?.batchDraw();
+
+    const animationFrame = window.requestAnimationFrame(() => {
+      transformer.forceUpdate();
+      transformer.getLayer()?.batchDraw();
+    });
+
+    return () => window.cancelAnimationFrame(animationFrame);
   }, [hasLockedSelection, selectedAssetIds, visibleAssetNodeKey]);
 
   const setNodeRef = (assetId: string, node: Konva.Group | null) => {
@@ -1222,8 +1387,10 @@ export function CanvasStage() {
                     key={asset.id}
                     asset={displayAsset}
                     isSelected={selectedAssetSet.has(asset.id)}
+                    isEditing={editingTextAssetId === asset.id}
                     isPanMode={isPanInteractionMode}
                     onContextMenu={handleAssetContextMenu}
+                    onEditText={beginTextEditing}
                     onInteractionActiveChange={setCanvasInteractionActive}
                     onSelect={(assetId, additive) => selectAsset(assetId, { additive })}
                     onBeginDrag={beginAssetDrag}
@@ -1270,7 +1437,7 @@ export function CanvasStage() {
                   job={job}
                   referenceAssets={job.request.selectedAssetIds
                     .map((assetId) => assetRegistry[assetId])
-                    .filter((asset): asset is AssetItem => Boolean(asset))}
+                    .filter((asset): asset is AssetItem => Boolean(asset) && isImageAsset(asset))}
                   animationTick={generationAnimationTick}
                   isPanMode={isPanInteractionMode}
                   onDrag={setGenerationJobCanvasPlacement}
@@ -1296,6 +1463,22 @@ export function CanvasStage() {
           </Stage>
         ) : null}
       </div>
+
+      {selectedTextAsset ? (
+        <TextStylePanel
+          asset={selectedTextAsset}
+          onUpdate={(update) => updateTextAsset(selectedTextAsset.id, update)}
+        />
+      ) : null}
+
+      {editingTextAsset ? (
+        <TextEditOverlay
+          asset={editingTextAsset}
+          camera={camera}
+          onFinish={finishTextEditing}
+          onUpdate={(update) => updateTextAsset(editingTextAsset.id, update)}
+        />
+      ) : null}
 
       {clampedContextMenuPosition ? (
         <div

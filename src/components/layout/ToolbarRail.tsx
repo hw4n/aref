@@ -5,6 +5,7 @@ import {
   GridIcon,
   SettingsIcon,
   SparklesIcon,
+  TextIcon,
 } from "@/components/icons/ui-icons";
 import { useAppStore } from "@/state/app-store";
 
@@ -13,7 +14,17 @@ export function ToolbarRail() {
   const frameSelection = useAppStore((state) => state.frameSelection);
   const centerSelection = useAppStore((state) => state.centerSelection);
   const selectionCount = useAppStore((state) => state.project.selection.assetIds.length);
+  const imageSelectionCount = useAppStore((state) =>
+    state.project.selection.assetIds.filter((assetId) => {
+      const asset = state.project.assets[assetId];
+      return asset?.kind === "imported" || asset?.kind === "generated";
+    }).length,
+  );
   const generationDraft = useAppStore((state) => state.generationDraft);
+  const addTextAsset = useAppStore((state) => state.addTextAsset);
+  const selectedTextCount = useAppStore((state) =>
+    state.project.selection.assetIds.filter((assetId) => state.project.assets[assetId]?.kind === "text").length,
+  );
   const gridVisible = useAppStore((state) => state.uiPreferences.gridVisible);
   const settingsOpen = useAppStore((state) => state.uiPreferences.settingsOpen);
   const toggleGridVisible = useAppStore((state) => state.toggleGridVisible);
@@ -34,7 +45,14 @@ export function ToolbarRail() {
       icon: <SparklesIcon size={18} />,
       onClick: () => setGenerationDraft({ isExplicitlyOpened: !generationDraft.isExplicitlyOpened }),
       disabled: false,
-      active: selectionCount > 0 || generationDraft.isExplicitlyOpened,
+      active: imageSelectionCount > 0 || generationDraft.isExplicitlyOpened,
+    },
+    {
+      label: "Text",
+      icon: <TextIcon size={18} />,
+      onClick: addTextAsset,
+      disabled: false,
+      active: selectedTextCount > 0,
     },
   ];
 

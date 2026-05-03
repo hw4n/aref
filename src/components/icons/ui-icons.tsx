@@ -168,6 +168,16 @@ export function SelectionIcon(props: IconProps) {
   );
 }
 
+export function TextIcon(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="M5 5h14" />
+      <path d="M12 5v14" />
+      <path d="M8 19h8" />
+    </IconBase>
+  );
+}
+
 export function ZoomIcon(props: IconProps) {
   return (
     <IconBase {...props}>

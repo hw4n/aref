@@ -220,7 +220,7 @@ export function InspectorPanel({
   onRerunGeneration,
 }: InspectorPanelProps) {
   const [activeTab, setActiveTab] = useState<"layers" | "jobs" | "recent">("layers");
-  const [assetFilter, setAssetFilter] = useState<"all" | "imported" | "generated">("all");
+  const [assetFilter, setAssetFilter] = useState<"all" | "imported" | "generated" | "text">("all");
   const sortedAssets = useAppStore(selectSortedAssets);
   const generationJobs = useAppStore(selectSortedGenerationJobs);
   const selectedAssetIds = useAppStore((state) => state.project.selection.assetIds);
@@ -282,7 +282,7 @@ export function InspectorPanel({
           </header>
 
           <div className="inspector-panel__filter-tabs">
-            {(["all", "imported", "generated"] as const).map((filter) => (
+            {(["all", "imported", "generated", "text"] as const).map((filter) => (
               <button
                 key={filter}
                 className={`inspector-panel__filter-tab ${assetFilter === filter ? "inspector-panel__filter-tab--active" : ""}`}

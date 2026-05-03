@@ -1,5 +1,11 @@
 import { getAssetsBounds } from "@/domain/assets/asset-geometry";
-import type { AssetItem } from "@/domain/assets/types";
+import {
+  isImageAsset,
+  isTextAsset,
+  type AssetItem,
+  type ImageAssetItem,
+  type TextAssetItem,
+} from "@/domain/assets/types";
 import {
   isLikelyFilePath,
   readManagedImageBytes,
@@ -98,7 +104,7 @@ async function writePngBlobToClipboard(blob: Blob) {
   ]);
 }
 
-async function copySingleAssetAsOriginalImage(asset: AssetItem): Promise<ClipboardCopyResult> {
+async function copySingleAssetAsOriginalImage(asset: ImageAssetItem): Promise<ClipboardCopyResult> {
   const loaded = await loadCanvasImage(asset.imagePath);
 
   try {
@@ -136,7 +142,7 @@ async function copyAssetsAsNativeFiles(assets: AssetItem[]) {
   }
 
   const fileAssets = assets.map((asset) => {
-    if (!isLikelyFilePath(asset.imagePath)) {
+    if (!isImageAsset(asset) || !isLikelyFilePath(asset.imagePath)) {
       return null;
     }
 
@@ -159,6 +165,74 @@ async function copyAssetsAsNativeFiles(assets: AssetItem[]) {
   }
 }
 
+function toCanvasFont(asset: TextAssetItem) {
+  const fontSize = Math.max(1, asset.text.fontSize * asset.scale);
+  const fontStyle = asset.text.fontStyle.includes("italic") ? "italic" : "normal";
+  const fontWeight = asset.text.fontStyle.includes("bold") ? "700" : "400";
+
+  return `${fontStyle} ${fontWeight} ${fontSize}px "${asset.text.fontFamily}"`;
+}
+
+function wrapTextLine(context: CanvasRenderingContext2D, line: string, maxWidth: number) {
+  const words = line.split(/(\s+)/).filter((word) => word.length > 0);
+  const wrapped: string[] = [];
+  let currentLine = "";
+
+  for (const word of words) {
+    const nextLine = `${currentLine}${word}`;
+
+    if (currentLine && context.measureText(nextLine).width > maxWidth) {
+      wrapped.push(currentLine.trimEnd());
+      currentLine = word.trimStart();
+      continue;
+    }
+
+    currentLine = nextLine;
+  }
+
+  wrapped.push(currentLine.trimEnd());
+  return wrapped.length > 0 ? wrapped : [""];
+}
+
+function drawTextAsset(context: CanvasRenderingContext2D, asset: TextAssetItem) {
+  const width = asset.width * asset.scale;
+  const height = asset.height * asset.scale;
+  const fontSize = Math.max(1, asset.text.fontSize * asset.scale);
+  const lineHeight = fontSize * asset.text.lineHeight;
+  const padding = Math.max(0, fontSize * 0.02);
+
+  context.save();
+  context.beginPath();
+  context.rect(-width / 2, -height / 2, width, height);
+  context.clip();
+  context.font = toCanvasFont(asset);
+  context.fillStyle = asset.text.fill;
+  context.textAlign = asset.text.align;
+  context.textBaseline = "top";
+
+  const textX = asset.text.align === "center"
+    ? 0
+    : asset.text.align === "right"
+      ? width / 2 - padding
+      : -width / 2 + padding;
+  let textY = -height / 2;
+  for (const paragraph of asset.text.value.split("\n")) {
+    const lines = wrapTextLine(context, paragraph, width);
+
+    for (const line of lines) {
+      context.fillText(line, textX, textY);
+      textY += lineHeight;
+
+      if (textY > height / 2) {
+        context.restore();
+        return;
+      }
+    }
+  }
+
+  context.restore();
+}
+
 export async function copyAssetsToClipboard(assets: AssetItem[]): Promise<ClipboardCopyResult> {
   const visibleAssets = assets
     .filter((asset) => !asset.hidden)
@@ -172,7 +246,7 @@ export async function copyAssetsToClipboard(assets: AssetItem[]): Promise<Clipbo
     };
   }
 
-  if (visibleAssets.length === 1) {
+  if (visibleAssets.length === 1 && isImageAsset(visibleAssets[0]!)) {
     return copySingleAssetAsOriginalImage(visibleAssets[0]!);
   }
 
@@ -201,27 +275,39 @@ export async function copyAssetsToClipboard(assets: AssetItem[]): Promise<Clipbo
   }
 
   const loadedImages: Array<{
-    asset: AssetItem;
+    asset: ImageAssetItem;
     image: HTMLImageElement;
     revoke: () => void;
   }> = [];
 
   try {
     for (const asset of visibleAssets) {
+      if (!isImageAsset(asset)) {
+        continue;
+      }
+
       loadedImages.push({
         asset,
         ...(await loadCanvasImage(asset.imagePath)),
       });
     }
 
-    for (const { asset, image } of loadedImages) {
+    for (const asset of visibleAssets) {
       const width = asset.width * asset.scale;
       const height = asset.height * asset.scale;
 
       context.save();
       context.translate(asset.x - bounds.x, asset.y - bounds.y);
       context.rotate((asset.rotation * Math.PI) / 180);
-      context.drawImage(image, -width / 2, -height / 2, width, height);
+      if (isTextAsset(asset)) {
+        drawTextAsset(context, asset);
+      } else {
+        const loaded = loadedImages.find((candidate) => candidate.asset.id === asset.id);
+
+        if (loaded) {
+          context.drawImage(loaded.image, -width / 2, -height / 2, width, height);
+        }
+      }
       context.restore();
     }
 

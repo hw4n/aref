@@ -149,6 +149,7 @@ pub struct RuntimeCameraState {
 pub struct RuntimeAssetItem {
     id: String,
     kind: String,
+    #[serde(default)]
     image_path: String,
     source_name: Option<String>,
     thumbnail_path: Option<String>,
@@ -165,6 +166,20 @@ pub struct RuntimeAssetItem {
     created_at: String,
     updated_at: String,
     generation: Option<RuntimeGeneratedAssetMetadata>,
+    #[serde(default)]
+    text: Option<RuntimeTextAssetContent>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeTextAssetContent {
+    value: String,
+    font_family: String,
+    font_size: f64,
+    font_style: String,
+    fill: String,
+    align: String,
+    line_height: f64,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -286,14 +301,10 @@ fn legacy_aspect_ratio_to_size(aspect_ratio: &str) -> Option<&'static str> {
 
 fn normalize_runtime_generation_size(size: Option<String>, aspect_ratio: Option<String>) -> String {
     match size.as_deref() {
-        Some("auto")
-        | Some("1024x1024")
-        | Some("1536x1024")
-        | Some("1024x1536")
-        | Some("2048x2048")
-        | Some("2048x1152")
-        | Some("3840x2160")
-        | Some("2160x3840") => size.unwrap(),
+        Some("auto") | Some("1024x1024") | Some("1536x1024") | Some("1024x1536")
+        | Some("2048x2048") | Some("2048x1152") | Some("3840x2160") | Some("2160x3840") => {
+            size.unwrap()
+        }
         _ => aspect_ratio
             .as_deref()
             .and_then(legacy_aspect_ratio_to_size)
@@ -362,6 +373,7 @@ struct PersistedProject {
 struct PersistedAssetItem {
     id: String,
     kind: String,
+    #[serde(default)]
     image_path: String,
     source_name: Option<String>,
     thumbnail_path: Option<String>,
@@ -378,6 +390,8 @@ struct PersistedAssetItem {
     created_at: String,
     updated_at: String,
     generation: Option<RuntimeGeneratedAssetMetadata>,
+    #[serde(default)]
+    text: Option<RuntimeTextAssetContent>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1000,12 +1014,20 @@ fn load_legacy_json_project(
         .assets
         .iter()
         .map(|asset| {
-            let absolute_image_path =
-                normalize_path(&project_directory.join(PathBuf::from(&asset.image_path)));
-            let absolute_thumbnail_path = asset
-                .thumbnail_path
-                .as_ref()
-                .map(|path| normalize_path(&project_directory.join(PathBuf::from(path))));
+            let is_text_asset = asset.kind == "text";
+            let absolute_image_path = if is_text_asset {
+                asset.image_path.clone()
+            } else {
+                normalize_path(&project_directory.join(PathBuf::from(&asset.image_path)))
+            };
+            let absolute_thumbnail_path = if is_text_asset {
+                None
+            } else {
+                asset
+                    .thumbnail_path
+                    .as_ref()
+                    .map(|path| normalize_path(&project_directory.join(PathBuf::from(path))))
+            };
 
             (
                 asset.id.clone(),
@@ -1028,6 +1050,7 @@ fn load_legacy_json_project(
                     created_at: asset.created_at.clone(),
                     updated_at: asset.updated_at.clone(),
                     generation: asset.generation.clone(),
+                    text: asset.text.clone(),
                 },
             )
         })
@@ -1087,11 +1110,19 @@ fn load_archive_project(
         .assets
         .iter()
         .map(|asset| {
-            let absolute_image_path =
-                extract_archive_entry(&mut archive, &asset.image_path, &output_root)?;
-            let absolute_thumbnail_path = match asset.thumbnail_path.as_deref() {
-                Some(path) => Some(extract_archive_entry(&mut archive, path, &output_root)?),
-                None => None,
+            let is_text_asset = asset.kind == "text";
+            let absolute_image_path = if is_text_asset {
+                asset.image_path.clone()
+            } else {
+                extract_archive_entry(&mut archive, &asset.image_path, &output_root)?
+            };
+            let absolute_thumbnail_path = if is_text_asset {
+                None
+            } else {
+                match asset.thumbnail_path.as_deref() {
+                    Some(path) => Some(extract_archive_entry(&mut archive, path, &output_root)?),
+                    None => None,
+                }
             };
 
             Ok((
@@ -1115,6 +1146,7 @@ fn load_archive_project(
                     created_at: asset.created_at.clone(),
                     updated_at: asset.updated_at.clone(),
                     generation: asset.generation.clone(),
+                    text: asset.text.clone(),
                 },
             ))
         })
@@ -1140,18 +1172,28 @@ fn write_project_file_to_path(
 
     let mut persisted_assets = Vec::with_capacity(project.assets.len());
     for asset in project.assets.values() {
-        let asset_source = asset_source_map
-            .get(&asset.id)
-            .ok_or_else(|| format!("Missing asset save payload for {}", asset.id))?;
+        let asset_source = if asset.kind == "text" {
+            None
+        } else {
+            Some(
+                asset_source_map
+                    .get(&asset.id)
+                    .ok_or_else(|| format!("Missing asset save payload for {}", asset.id))?,
+            )
+        };
 
         persisted_assets.push(PersistedAssetItem {
             id: asset.id.clone(),
             kind: asset.kind.clone(),
-            image_path: archive_asset_path(&asset.id, &asset_source.image),
+            image_path: asset_source
+                .map(|source| archive_asset_path(&asset.id, &source.image))
+                .unwrap_or_else(|| asset.image_path.clone()),
             source_name: asset.source_name.clone(),
-            thumbnail_path: asset_source.thumbnail.as_ref().map(|thumbnail_source| {
-                archive_asset_path(&format!("{}-thumb", asset.id), thumbnail_source)
-            }),
+            thumbnail_path: asset_source
+                .and_then(|source| source.thumbnail.as_ref())
+                .map(|thumbnail_source| {
+                    archive_asset_path(&format!("{}-thumb", asset.id), thumbnail_source)
+                }),
             width: asset.width,
             height: asset.height,
             x: asset.x,
@@ -1165,6 +1207,7 @@ fn write_project_file_to_path(
             created_at: asset.created_at.clone(),
             updated_at: asset.updated_at.clone(),
             generation: asset.generation.clone(),
+            text: asset.text.clone(),
         });
     }
 
@@ -1174,6 +1217,10 @@ fn write_project_file_to_path(
     let mut archive = ZipWriter::new(file);
 
     for asset in project.assets.values() {
+        if asset.kind == "text" {
+            continue;
+        }
+
         let asset_source = asset_source_map
             .get(&asset.id)
             .ok_or_else(|| format!("Missing asset save payload for {}", asset.id))?;
@@ -1260,6 +1307,7 @@ fn persisted_assets_from_runtime_paths(project: &RuntimeProject) -> Vec<Persiste
             created_at: asset.created_at.clone(),
             updated_at: asset.updated_at.clone(),
             generation: asset.generation.clone(),
+            text: asset.text.clone(),
         })
         .collect()
 }
@@ -1626,6 +1674,7 @@ mod tests {
                     created_at: "2026-04-23T00:00:00Z".to_string(),
                     updated_at: "2026-04-23T00:00:00Z".to_string(),
                     generation: None,
+                    text: None,
                 },
             )]),
             groups: BTreeMap::new(),
@@ -1776,6 +1825,69 @@ mod tests {
             .contains("/opened-projects/"));
         assert!(project_path.exists());
         assert!(!test_directory.join("roundtrip.aref-assets").exists());
+
+        fs::remove_dir_all(test_directory).expect("cleanup temp directory");
+    }
+
+    #[test]
+    fn writes_and_loads_text_assets_without_image_payloads() {
+        let test_directory =
+            std::env::temp_dir().join(format!("aref-text-roundtrip-{}", Uuid::new_v4()));
+        fs::create_dir_all(&test_directory).expect("create temp directory");
+        let project_path = test_directory.join("text.aref");
+        let mut project = sample_project();
+        project.assets = BTreeMap::from([(
+            "text-1".to_string(),
+            RuntimeAssetItem {
+                id: "text-1".to_string(),
+                kind: "text".to_string(),
+                image_path: String::new(),
+                source_name: Some("Text Layer".to_string()),
+                thumbnail_path: None,
+                width: 360.0,
+                height: 58.0,
+                x: 120.0,
+                y: 140.0,
+                rotation: 0.0,
+                scale: 1.0,
+                z_index: 0,
+                locked: false,
+                hidden: false,
+                tags: vec!["text".to_string()],
+                created_at: "2026-04-23T00:00:00Z".to_string(),
+                updated_at: "2026-04-23T00:00:00Z".to_string(),
+                generation: None,
+                text: Some(RuntimeTextAssetContent {
+                    value: "Caption".to_string(),
+                    font_family: "Arial".to_string(),
+                    font_size: 42.0,
+                    font_style: "bold".to_string(),
+                    fill: "#ffdf6e".to_string(),
+                    align: "center".to_string(),
+                    line_height: 1.2,
+                }),
+            },
+        )]);
+        project.selection.asset_ids = vec!["text-1".to_string()];
+        project.selection.last_active_asset_id = Some("text-1".to_string());
+
+        write_project_file_to_path(&project_path, &project, &[])
+            .expect("write text-only project file");
+        let loaded = load_project_file_internal(None, &project_path).expect("load text project");
+        let loaded_text = loaded.project.assets.get("text-1").expect("text asset");
+
+        assert_eq!(loaded_text.kind, "text");
+        assert_eq!(
+            loaded_text
+                .text
+                .as_ref()
+                .map(|text| text.font_family.as_str()),
+            Some("Arial")
+        );
+        assert_eq!(
+            loaded_text.text.as_ref().map(|text| text.value.as_str()),
+            Some("Caption")
+        );
 
         fs::remove_dir_all(test_directory).expect("cleanup temp directory");
     }

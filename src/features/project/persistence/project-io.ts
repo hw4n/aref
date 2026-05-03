@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 
 import type { ImportedImageDraft } from "@/domain/assets/imported-asset-utils";
+import { isImageAsset } from "@/domain/assets/types";
 import type { Project } from "@/domain/project/types";
 import {
   createImageThumbnailBlob,
@@ -181,7 +182,7 @@ export async function ensureManagedImageThumbnails<T extends ManagedThumbnailDra
 }
 
 async function createAssetSourcePayload(project: Project): Promise<ProjectAssetSourcePayload[]> {
-  const assets = Object.values(project.assets);
+  const assets = Object.values(project.assets).filter(isImageAsset);
 
   return Promise.all(
     assets.map(async (asset) => {

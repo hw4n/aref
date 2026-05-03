@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 
-import type { AssetItem } from "@/domain/assets/types";
+import { isTextAsset, type AssetItem } from "@/domain/assets/types";
 import {
   createManagedImageThumbnail,
   isLikelyFilePath,
@@ -23,6 +23,10 @@ function RenderableImage({ src }: { src: string }) {
 }
 
 function getAssetInitial(asset: AssetItem) {
+  if (isTextAsset(asset)) {
+    return asset.text.value.trim().charAt(0).toUpperCase() || "T";
+  }
+
   return (asset.sourceName ?? asset.kind).trim().charAt(0).toUpperCase() || "?";
 }
 
@@ -49,8 +53,9 @@ function scheduleThumbnailBackfill(callback: () => void) {
 export function AssetThumbnail({ asset }: { asset: AssetItem }) {
   const setAssetThumbnailPath = useAppStore((state) => state.setAssetThumbnailPath);
   const isCanvasInteractionActive = useAppStore((state) => state.isCanvasInteractionActive);
+  const isText = isTextAsset(asset);
   const source = asset.thumbnailPath ?? (isLikelyFilePath(asset.imagePath) ? null : asset.imagePath);
-  const shouldBackfillThumbnail = !asset.thumbnailPath && isLikelyFilePath(asset.imagePath);
+  const shouldBackfillThumbnail = !isText && !asset.thumbnailPath && isLikelyFilePath(asset.imagePath);
 
   useEffect(() => {
     if (!shouldBackfillThumbnail || isCanvasInteractionActive) {
@@ -88,13 +93,18 @@ export function AssetThumbnail({ asset }: { asset: AssetItem }) {
     shouldBackfillThumbnail,
   ]);
 
-  if (source) {
+  if (!isText && source) {
     return <RenderableImage src={source} />;
   }
 
   return (
-    <span className="asset-thumb-placeholder" aria-hidden="true">
-      <span>{getAssetInitial(asset)}</span>
+    <span
+      className={`asset-thumb-placeholder ${isText ? "asset-thumb-placeholder--text" : ""}`}
+      aria-hidden="true"
+    >
+      <span style={isText ? { fontFamily: asset.text.fontFamily, color: asset.text.fill } : undefined}>
+        {getAssetInitial(asset)}
+      </span>
     </span>
   );
 }

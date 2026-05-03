@@ -96,7 +96,12 @@ export function AppShell() {
   const inspectorOpen = useAppStore((state) => state.uiPreferences.inspectorOpen);
   const inspectorWidth = useAppStore((state) => state.uiPreferences.inspectorWidth);
   const generationSheetWidth = useAppStore((state) => state.uiPreferences.generationSheetWidth);
-  const selectionCount = useAppStore((state) => state.project.selection.assetIds.length);
+  const referenceSelectionCount = useAppStore((state) =>
+    state.project.selection.assetIds.filter((assetId) => {
+      const asset = state.project.assets[assetId];
+      return asset?.kind === "imported" || asset?.kind === "generated";
+    }).length,
+  );
   const isGenerationSheetExplicitlyOpened = useAppStore((state) => state.generationDraft.isExplicitlyOpened);
   const toggleLeftSidebar = useAppStore((state) => state.toggleLeftSidebar);
   const toggleInspector = useAppStore((state) => state.toggleInspector);
@@ -123,7 +128,7 @@ export function AppShell() {
     onGenerationCompleted: saveAutosaveNow,
   });
   const providerManagement = useProviderManagement();
-  const showGenerationSheet = shouldShowContextualGenerationSheet(selectionCount, isGenerationSheetExplicitlyOpened);
+  const showGenerationSheet = shouldShowContextualGenerationSheet(referenceSelectionCount, isGenerationSheetExplicitlyOpened);
 
   const handleImportFiles = useCallback(
     async (files: File[]) => {
