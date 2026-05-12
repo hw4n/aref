@@ -7,7 +7,7 @@ use std::{
     net::TcpListener,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
-    sync::Arc,
+    sync::{Arc, OnceLock},
     thread,
     time::{Duration, Instant},
 };
@@ -19,7 +19,7 @@ use reqwest::{Client, StatusCode, Url};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Manager, State};
-use tokio::sync::{watch, Mutex};
+use tokio::sync::{watch, Mutex, Semaphore};
 use uuid::Uuid;
 
 #[cfg(target_os = "windows")]
@@ -31,8 +31,11 @@ const IMA2_SIDECAR_REQUEST_LOG_FILENAME: &str = "ima2-sidecar-requests.jsonl";
 const IMA2_SIDECAR_PROXY_LOG_FILENAME: &str = "ima2-sidecar-proxy.log";
 const IMA2_SIDECAR_LOGIN_LOG_FILENAME: &str = "ima2-sidecar-login.log";
 const IMA2_SIDECAR_GENERATED_DIRECTORY: &str = "ima2-sidecar-generated";
-const IMA2_SIDECAR_REQUEST_TIMEOUT_SECONDS: u64 = 240;
+const IMA2_SIDECAR_REQUEST_TIMEOUT_SECONDS: u64 = 420;
+const IMA2_SIDECAR_HEAVY_REQUEST_TIMEOUT_SECONDS: u64 = 900;
 const IMA2_SIDECAR_HEALTH_TIMEOUT_SECONDS: u64 = 3;
+const IMA2_SIDECAR_PROXY_LOG_TAIL_LINES: usize = 80;
+const IMA2_SIDECAR_PROXY_LOG_TAIL_CHARS: usize = 12_000;
 const IMA2_SIDECAR_PROXY_WARMUP_MILLISECONDS: u64 = 900;
 const IMA2_SIDECAR_PROXY_READY_TIMEOUT_MILLISECONDS: u64 = 12_000;
 const IMA2_SIDECAR_PROXY_READY_POLL_MILLISECONDS: u64 = 750;
@@ -44,6 +47,8 @@ const OPENAI_OAUTH_FALLBACK_CODEX_VERSION: &str = "0.124.0";
 const OAUTH_IMAGE_MODEL: &str = "gpt-5.5";
 const OAUTH_IMAGE_DEVELOPER_PROMPT: &str =
     "You are an image generator for a desktop reference-board app. Always use the image_generation tool and do not return a text-only answer. Generate exactly one image that follows the user's prompt and references.";
+
+static IMA2_OAUTH_GENERATION_SEMAPHORE: OnceLock<Arc<Semaphore>> = OnceLock::new();
 
 #[derive(Default)]
 pub struct Ima2SidecarOperationRegistry {
@@ -63,6 +68,12 @@ struct Ima2SidecarOperationEntry {
 struct ManagedIma2Proxy {
     child: Child,
     base_url: String,
+}
+
+fn ima2_oauth_generation_semaphore() -> Arc<Semaphore> {
+    IMA2_OAUTH_GENERATION_SEMAPHORE
+        .get_or_init(|| Arc::new(Semaphore::new(1)))
+        .clone()
 }
 
 #[derive(Debug, Clone)]
@@ -391,6 +402,36 @@ fn generation_size_to_ima2_size(size: &str) -> (&'static str, u32, u32) {
         "3840x2160" => ("3840x2160", 3840, 2160),
         "2160x3840" => ("2160x3840", 2160, 3840),
         _ => ("1024x1024", 1024, 1024),
+    }
+}
+
+fn ima2_sidecar_reference_byte_summary(
+    request: &StartIma2SidecarGenerationRequest,
+) -> (usize, usize, usize) {
+    request.reference_images.iter().fold(
+        (0_usize, 0_usize, 0_usize),
+        |(byte_length, original_byte_length, compressed_count), image| {
+            let original = image.original_byte_length.unwrap_or(image.bytes.len());
+            (
+                byte_length + image.bytes.len(),
+                original_byte_length + original,
+                compressed_count + if original > image.bytes.len() { 1 } else { 0 },
+            )
+        },
+    )
+}
+
+fn ima2_sidecar_request_timeout_seconds(request: &StartIma2SidecarGenerationRequest) -> u64 {
+    let normalized_size = normalized_generation_size(&request.settings);
+    let (_, original_reference_bytes, _) = ima2_sidecar_reference_byte_summary(request);
+    let is_heavy_request = matches!(normalized_size.as_str(), "3840x2160" | "2160x3840")
+        || request.reference_images.len() >= 3
+        || original_reference_bytes >= 20 * 1024 * 1024;
+
+    if is_heavy_request {
+        IMA2_SIDECAR_HEAVY_REQUEST_TIMEOUT_SECONDS
+    } else {
+        IMA2_SIDECAR_REQUEST_TIMEOUT_SECONDS
     }
 }
 
@@ -994,6 +1035,7 @@ fn build_ima2_sidecar_request_payload(
     let prompt = compose_prompt(&request.prompt, request.negative_prompt.as_deref());
     let quality = normalize_oauth_image_quality(request.settings.quality.as_deref());
     let moderation = normalize_oauth_image_moderation(request.settings.moderation.as_deref());
+    let timeout_seconds = ima2_sidecar_request_timeout_seconds(request);
     let reference_images = request
         .reference_images
         .iter()
@@ -1026,6 +1068,8 @@ fn build_ima2_sidecar_request_payload(
         "url": format!("{}/v1/responses", base_url),
         "clientRequestId": &request.job_id,
         "mode": ima2_sidecar_request_mode(request),
+        "timeoutSeconds": timeout_seconds,
+        "serializedProxyRequests": true,
         "body": {
             "model": OAUTH_IMAGE_MODEL,
             "input": [
@@ -1049,6 +1093,34 @@ fn build_ima2_sidecar_request_payload(
             "tool_choice": "required",
             "stream": stream
         }
+    })
+}
+
+fn build_ima2_sidecar_request_diagnostic(request: &StartIma2SidecarGenerationRequest) -> Value {
+    let normalized_size = normalized_generation_size(&request.settings);
+    let (size, width, height) = generation_size_to_ima2_size(&normalized_size);
+    let (reference_byte_length, reference_original_byte_length, compressed_reference_count) =
+        ima2_sidecar_reference_byte_summary(request);
+
+    json!({
+        "clientRequestId": &request.job_id,
+        "model": OAUTH_IMAGE_MODEL,
+        "mode": ima2_sidecar_request_mode(request),
+        "imageCount": request.settings.image_count,
+        "promptLength": request.prompt.len(),
+        "hasNegativePrompt": request.negative_prompt.is_some(),
+        "size": size,
+        "width": width,
+        "height": height,
+        "quality": normalize_oauth_image_quality(request.settings.quality.as_deref()),
+        "moderation": normalize_oauth_image_moderation(request.settings.moderation.as_deref()),
+        "stream": true,
+        "timeoutSeconds": ima2_sidecar_request_timeout_seconds(request),
+        "serializedProxyRequests": true,
+        "referenceCount": request.reference_images.len(),
+        "referenceByteLength": reference_byte_length,
+        "referenceOriginalByteLength": reference_original_byte_length,
+        "compressedReferenceCount": compressed_reference_count
     })
 }
 
@@ -1083,12 +1155,23 @@ fn build_ima2_sidecar_response_payload(
 fn build_ima2_sidecar_failure_response_payload(
     app: &AppHandle,
     base_url: &str,
+    request: &StartIma2SidecarGenerationRequest,
     error: &str,
 ) -> Value {
     let proxy_log_path = ima2_sidecar_proxy_log_path(app).ok();
     let last_proxy_error = proxy_log_path
         .as_deref()
         .and_then(last_aref_proxy_error_from_log);
+    let proxy_log_tail = proxy_log_path
+        .as_deref()
+        .and_then(|path| {
+            tail_proxy_log_lines(
+                path,
+                IMA2_SIDECAR_PROXY_LOG_TAIL_LINES,
+                IMA2_SIDECAR_PROXY_LOG_TAIL_CHARS,
+            )
+        })
+        .unwrap_or_default();
     let proxy_log_path_text = proxy_log_path
         .as_ref()
         .map(|path| path.to_string_lossy().to_string());
@@ -1114,6 +1197,8 @@ fn build_ima2_sidecar_failure_response_payload(
             "endpoint": format!("{}/v1/responses", base_url),
             "proxyLogPath": proxy_log_path_text,
             "lastProxyError": last_proxy_error,
+            "proxyLogTail": proxy_log_tail,
+            "request": build_ima2_sidecar_request_diagnostic(request),
             "hint": hint
         }
     })
@@ -1303,6 +1388,40 @@ fn last_aref_proxy_error_from_log(proxy_log_path: &Path) -> Option<String> {
                 .map(|(_prefix, error)| error)
         })
         .map(sanitize_proxy_error)
+}
+
+fn tail_proxy_log_lines(
+    proxy_log_path: &Path,
+    max_lines: usize,
+    max_chars: usize,
+) -> Option<Vec<String>> {
+    let contents = fs::read_to_string(proxy_log_path).ok()?;
+    let mut lines = Vec::new();
+    let mut char_count = 0_usize;
+
+    for line in contents.lines().rev() {
+        let sanitized = sanitize_proxy_error(line);
+        let trimmed = sanitized.trim();
+
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let next_count = char_count + trimmed.chars().count();
+        if !lines.is_empty() && next_count > max_chars {
+            break;
+        }
+
+        lines.push(trimmed.to_string());
+        char_count = next_count;
+
+        if lines.len() >= max_lines {
+            break;
+        }
+    }
+
+    lines.reverse();
+    Some(lines)
 }
 
 fn extract_text_fragments(value: &Value, fragments: &mut Vec<String>) {
@@ -2092,8 +2211,19 @@ async fn execute_ima2_sidecar_request(
     operation_id: &str,
     mut cancel_rx: watch::Receiver<bool>,
 ) -> Result<(Vec<Ima2SidecarGeneratedImage>, Vec<String>), String> {
+    if *cancel_rx.borrow() {
+        return Err("cancelled".to_string());
+    }
+
+    let oauth_generation_semaphore = ima2_oauth_generation_semaphore();
+    let _oauth_generation_permit = tokio::select! {
+        _ = cancel_rx.changed() => return Err("cancelled".to_string()),
+        permit = oauth_generation_semaphore.acquire_owned() => permit
+            .map_err(|_| "ChatGPT OAuth generation queue is closed.".to_string())?,
+    };
+    let timeout_seconds = ima2_sidecar_request_timeout_seconds(request);
     let client = Client::builder()
-        .timeout(Duration::from_secs(IMA2_SIDECAR_REQUEST_TIMEOUT_SECONDS))
+        .timeout(Duration::from_secs(timeout_seconds))
         .build()
         .map_err(|error| error.to_string())?;
     let normalized_size = normalized_generation_size(&request.settings);
@@ -2255,7 +2385,7 @@ async fn run_ima2_sidecar_operation(
         }
         Err(error) => {
             let response_payload =
-                build_ima2_sidecar_failure_response_payload(&app, &base_url, &error);
+                build_ima2_sidecar_failure_response_payload(&app, &base_url, &request, &error);
             update_record(&record, |entry| {
                 entry.status = "failed".to_string();
                 entry.completed_at = Some(now_iso_string());
@@ -2599,6 +2729,89 @@ mod tests {
             generation_size_to_ima2_size("2160x3840"),
             ("2160x3840", 2160, 3840)
         );
+    }
+
+    #[test]
+    fn uses_heavier_timeout_for_large_reference_requests() {
+        let request = StartIma2SidecarGenerationRequest {
+            job_id: "job-heavy".to_string(),
+            prompt: "prompt".to_string(),
+            negative_prompt: None,
+            settings: Ima2SidecarGenerationSettings {
+                image_count: 1,
+                size: "3840x2160".to_string(),
+                aspect_ratio: None,
+                quality: None,
+                moderation: None,
+            },
+            reference_images: vec![
+                Ima2SidecarReferenceImage {
+                    _filename: "ref-a.jpg".to_string(),
+                    mime_type: "image/jpeg".to_string(),
+                    bytes: vec![1, 2, 3],
+                    original_byte_length: Some(10 * 1024 * 1024),
+                },
+                Ima2SidecarReferenceImage {
+                    _filename: "ref-b.jpg".to_string(),
+                    mime_type: "image/jpeg".to_string(),
+                    bytes: vec![1, 2],
+                    original_byte_length: Some(12 * 1024 * 1024),
+                },
+            ],
+        };
+
+        assert_eq!(
+            ima2_sidecar_request_timeout_seconds(&request),
+            IMA2_SIDECAR_HEAVY_REQUEST_TIMEOUT_SECONDS
+        );
+    }
+
+    #[test]
+    fn builds_request_diagnostic_with_reference_sizes() {
+        let request = StartIma2SidecarGenerationRequest {
+            job_id: "job-diagnostic".to_string(),
+            prompt: "prompt".to_string(),
+            negative_prompt: Some("negative".to_string()),
+            settings: Ima2SidecarGenerationSettings {
+                image_count: 1,
+                size: "1024x1024".to_string(),
+                aspect_ratio: None,
+                quality: Some("high".to_string()),
+                moderation: Some("auto".to_string()),
+            },
+            reference_images: vec![Ima2SidecarReferenceImage {
+                _filename: "ref.jpg".to_string(),
+                mime_type: "image/jpeg".to_string(),
+                bytes: vec![1, 2, 3, 4],
+                original_byte_length: Some(16),
+            }],
+        };
+
+        let diagnostic = build_ima2_sidecar_request_diagnostic(&request);
+
+        assert_eq!(diagnostic["clientRequestId"], "job-diagnostic");
+        assert_eq!(diagnostic["referenceCount"], 1);
+        assert_eq!(diagnostic["referenceByteLength"], 4);
+        assert_eq!(diagnostic["referenceOriginalByteLength"], 16);
+        assert_eq!(diagnostic["compressedReferenceCount"], 1);
+        assert_eq!(diagnostic["serializedProxyRequests"], true);
+    }
+
+    #[test]
+    fn tails_proxy_log_lines_with_sanitization() {
+        let root = env::temp_dir().join(format!("aref-proxy-tail-test-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).expect("log dir");
+        let log_path = root.join("ima2-sidecar-proxy.log");
+        fs::write(&log_path, "old line\nBearer secret-token\nlatest line\n")
+            .expect("write proxy log");
+
+        let lines = tail_proxy_log_lines(&log_path, 2, 1_000).expect("tail lines");
+
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0], "[redacted]secret-token");
+        assert_eq!(lines[1], "latest line");
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
