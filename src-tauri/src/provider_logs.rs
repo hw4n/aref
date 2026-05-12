@@ -24,6 +24,8 @@ pub struct ProviderRequestLogEntry {
     image_count: Option<u64>,
     reference_count: Option<u64>,
     error: Option<String>,
+    request_payload: Option<Value>,
+    response_payload: Option<Value>,
     raw_json: String,
 }
 
@@ -90,6 +92,8 @@ fn map_log_line(provider: &str, raw_json: &str) -> Option<ProviderRequestLogEntr
         image_count: extract_first_u64(&value, &["imageCount"]),
         reference_count: extract_first_u64(&value, &["referenceCount"]),
         error: extract_first_string(&value, &["error"]),
+        request_payload: value.get("requestPayload").cloned(),
+        response_payload: value.get("responsePayload").cloned(),
         raw_json: raw_json.to_string(),
     })
 }
@@ -132,7 +136,7 @@ mod tests {
 
     #[test]
     fn maps_openai_log_lines() {
-        let raw = r#"{"timestamp":"2026-04-23T12:00:00Z","operationId":"op-1","clientRequestId":"job-1","openaiRequestId":"req-1","model":"gpt-image-2","mode":"generate","status":"failed","referenceCount":2,"imageCount":1,"promptLength":22,"error":"boom"}"#;
+        let raw = r#"{"timestamp":"2026-04-23T12:00:00Z","operationId":"op-1","clientRequestId":"job-1","openaiRequestId":"req-1","model":"gpt-image-2","mode":"generate","status":"failed","referenceCount":2,"imageCount":1,"promptLength":22,"error":"boom","requestPayload":{"body":{"prompt":"hello"}},"responsePayload":{"status":"failed","error":"boom"}}"#;
         let entry = map_log_line("openai", raw).expect("entry should parse");
 
         assert_eq!(entry.provider, "openai");
@@ -140,6 +144,23 @@ mod tests {
         assert_eq!(entry.client_request_id.as_deref(), Some("job-1"));
         assert_eq!(entry.provider_request_id.as_deref(), Some("req-1"));
         assert_eq!(entry.error.as_deref(), Some("boom"));
+        assert_eq!(
+            entry
+                .request_payload
+                .as_ref()
+                .and_then(|payload| payload.get("body"))
+                .and_then(|body| body.get("prompt"))
+                .and_then(Value::as_str),
+            Some("hello")
+        );
+        assert_eq!(
+            entry
+                .response_payload
+                .as_ref()
+                .and_then(|payload| payload.get("status"))
+                .and_then(Value::as_str),
+            Some("failed")
+        );
     }
 
     #[test]

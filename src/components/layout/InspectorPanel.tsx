@@ -1,8 +1,10 @@
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   AssetsIcon,
   CancelIcon,
+  CodeIcon,
+  CopyIcon,
   EyeIcon,
   EyeOffIcon,
   RecentIcon,
@@ -14,6 +16,9 @@ import {
   SparklesIcon,
 } from "@/components/icons/ui-icons";
 import type { AssetItem } from "@/domain/assets/types";
+import type { GenerationJob } from "@/domain/jobs/types";
+import type { ProviderRequestLogEntry } from "@/domain/providers/types";
+import { useProviderRequestLogs } from "@/features/ai/provider-logs/use-provider-request-logs";
 import { AssetThumbnail } from "@/features/images/components/AssetThumbnail";
 import { getProjectDisplayName } from "@/features/project/persistence/project-title";
 import type { RecentProjectRecord } from "@/features/project/persistence/types";
@@ -31,12 +36,81 @@ function isAdditiveSelectionModifier(event: { ctrlKey: boolean; metaKey: boolean
   return event.shiftKey || event.ctrlKey || event.metaKey;
 }
 
+const PROVIDER_LOG_LIMIT = 100;
+
+function formatPayloadForDisplay(payload: unknown) {
+  if (payload === undefined) {
+    return "";
+  }
+
+  try {
+    const serialized = JSON.stringify(payload, null, 2);
+    return serialized ?? String(payload);
+  } catch {
+    return String(payload);
+  }
+}
+
+async function copyTextToClipboard(text: string) {
+  if (!navigator.clipboard?.writeText) {
+    throw new Error("Text clipboard is not available.");
+  }
+
+  await navigator.clipboard.writeText(text);
+}
+
+function createJobRequestPayload(job: GenerationJob) {
+  return {
+    jobId: job.id,
+    status: job.status,
+    createdAt: job.createdAt,
+    startedAt: job.startedAt ?? null,
+    attemptCount: job.attemptCount,
+    canvasPlacement: job.canvasPlacement,
+    request: job.request,
+  };
+}
+
+function createJobResponsePayload(job: GenerationJob) {
+  if (job.status === "queued" || job.status === "running") {
+    return null;
+  }
+
+  return {
+    jobId: job.id,
+    status: job.status,
+    completedAt: job.completedAt ?? null,
+    cancelledAt: job.cancelledAt ?? null,
+    error: job.error ?? null,
+    providerRequestId: job.providerRequestId ?? null,
+    providerMode: job.providerMode ?? null,
+    resultAssetIds: job.resultAssetIds,
+  };
+}
+
+function providerLogTimestamp(entry: ProviderRequestLogEntry) {
+  const timestamp = entry.timestamp ? new Date(entry.timestamp).getTime() : Number.NaN;
+  return Number.isNaN(timestamp) ? 0 : timestamp;
+}
+
+function findProviderLogForJob(job: GenerationJob, entries: ProviderRequestLogEntry[]) {
+  return (
+    entries.find((entry) => entry.provider === job.request.provider && entry.clientRequestId === job.id)
+    ?? entries.find((entry) => entry.clientRequestId === job.id)
+    ?? null
+  );
+}
+
 function GenerationJobCard({
   jobId,
+  providerLog,
+  onReloadProviderLogs,
   onCancelGeneration,
   onRerunGeneration,
 }: {
   jobId: string;
+  providerLog: ProviderRequestLogEntry | null;
+  onReloadProviderLogs: () => void;
   onCancelGeneration: (jobId: string) => void;
   onRerunGeneration: (jobId: string) => void | Promise<string | null>;
 }) {
@@ -85,6 +159,29 @@ function GenerationJobCard({
       description: "The job was removed from the list.",
     });
   };
+  const fallbackRequestPayload = createJobRequestPayload(job);
+  const fallbackResponsePayload = createJobResponsePayload(job);
+  const requestPayload = providerLog?.requestPayload ?? fallbackRequestPayload;
+  const responsePayload = providerLog?.responsePayload ?? fallbackResponsePayload;
+  const requestPayloadText = formatPayloadForDisplay(requestPayload);
+  const responsePayloadText = responsePayload ? formatPayloadForDisplay(responsePayload) : "";
+  const providerLogLabel = providerLog ? "Provider log" : "Job snapshot";
+  const copyPayload = async (label: "request" | "response", text: string) => {
+    try {
+      await copyTextToClipboard(text);
+      pushToast({
+        kind: "success",
+        title: "Payload copied",
+        description: `${label === "request" ? "Request" : "Response"} payload is on the clipboard.`,
+      });
+    } catch (error) {
+      pushToast({
+        kind: "error",
+        title: "Copy failed",
+        description: error instanceof Error ? error.message : "Could not copy the payload.",
+      });
+    }
+  };
 
   return (
     <article className="generation-job-card">
@@ -113,6 +210,63 @@ function GenerationJobCard({
       {job.status === "succeeded" ? (
         <p className="generation-job-card__success">{`${resultCount} result${resultCount === 1 ? "" : "s"} on canvas`}</p>
       ) : null}
+
+      <details className="generation-job-card__payload">
+        <summary className="generation-job-card__payload-summary">
+          <span>
+            <CodeIcon size={14} />
+            <strong>Payloads</strong>
+          </span>
+          <span>{providerLogLabel}</span>
+        </summary>
+
+        <div className="generation-job-card__payload-body">
+          <section className="generation-job-card__payload-section">
+            <header className="generation-job-card__payload-header">
+              <strong>Request</strong>
+              <button
+                className="generation-job-card__payload-action"
+                onClick={() => void copyPayload("request", requestPayloadText)}
+                title="Copy request payload"
+              >
+                <CopyIcon size={13} />
+                <span>Copy req</span>
+              </button>
+            </header>
+            <pre className="generation-job-card__payload-preview">{requestPayloadText}</pre>
+          </section>
+
+          <section className="generation-job-card__payload-section">
+            <header className="generation-job-card__payload-header">
+              <strong>Response</strong>
+              <span className="generation-job-card__payload-actions">
+                <button
+                  className="generation-job-card__payload-action"
+                  onClick={onReloadProviderLogs}
+                  title="Refresh provider payload logs"
+                >
+                  <RetryIcon size={13} />
+                  <span>Refresh</span>
+                </button>
+                <button
+                  className="generation-job-card__payload-action"
+                  disabled={!responsePayload}
+                  onClick={() => void copyPayload("response", responsePayloadText)}
+                  title={responsePayload ? "Copy response payload" : "Response payload is not available yet"}
+                >
+                  <CopyIcon size={13} />
+                  <span>Copy res</span>
+                </button>
+              </span>
+            </header>
+            {responsePayload ? (
+              <pre className="generation-job-card__payload-preview">{responsePayloadText}</pre>
+            ) : (
+              <p className="generation-job-card__payload-empty">Response payload is not available yet.</p>
+            )}
+          </section>
+        </div>
+      </details>
 
       <div className="generation-job-card__actions">
         {canCancel ? (
@@ -223,6 +377,8 @@ export function InspectorPanel({
   const [assetFilter, setAssetFilter] = useState<"all" | "imported" | "generated" | "text">("all");
   const sortedAssets = useAppStore(selectSortedAssets);
   const generationJobs = useAppStore(selectSortedGenerationJobs);
+  const openAiProviderLogs = useProviderRequestLogs("openai", PROVIDER_LOG_LIMIT);
+  const ima2SidecarProviderLogs = useProviderRequestLogs("ima2-sidecar", PROVIDER_LOG_LIMIT);
   const selectedAssetIds = useAppStore((state) => state.project.selection.assetIds);
   const revealHiddenAsset = useAppStore((state) => state.revealHiddenAsset);
   const selectAsset = useAppStore((state) => state.selectAsset);
@@ -236,6 +392,32 @@ export function InspectorPanel({
   const redoVisibilityCount = useAppStore((state) => state.visibilityHistory.redoStack.length);
 
   const hiddenAssetCount = sortedAssets.filter((asset) => asset.hidden).length;
+  const providerLogEntries = useMemo(
+    () =>
+      [...openAiProviderLogs.entries, ...ima2SidecarProviderLogs.entries].sort(
+        (left, right) => providerLogTimestamp(right) - providerLogTimestamp(left),
+      ),
+    [ima2SidecarProviderLogs.entries, openAiProviderLogs.entries],
+  );
+  const reloadProviderLogs = useCallback(() => {
+    void openAiProviderLogs.reload();
+    void ima2SidecarProviderLogs.reload();
+  }, [ima2SidecarProviderLogs.reload, openAiProviderLogs.reload]);
+  const generationJobLogRefreshKey = useMemo(
+    () =>
+      generationJobs
+        .map(
+          (job) =>
+            `${job.id}:${job.status}:${job.startedAt ?? ""}:${job.completedAt ?? ""}:${job.cancelledAt ?? ""}:${job.error ?? ""}`,
+        )
+        .join("|"),
+    [generationJobs],
+  );
+
+  useEffect(() => {
+    reloadProviderLogs();
+  }, [generationJobLogRefreshKey, reloadProviderLogs]);
+
   const filteredAssets = useMemo(
     () =>
       sortedAssets.filter((asset) => {
@@ -354,6 +536,8 @@ export function InspectorPanel({
                 <GenerationJobCard
                   key={job.id}
                   jobId={job.id}
+                  providerLog={findProviderLogForJob(job, providerLogEntries)}
+                  onReloadProviderLogs={reloadProviderLogs}
                   onCancelGeneration={onCancelGeneration}
                   onRerunGeneration={onRerunGeneration}
                 />

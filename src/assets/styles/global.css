@@ -1635,6 +1635,99 @@ button:disabled {
   background: rgba(255, 107, 107, 0.1);
 }
 
+.generation-job-card__payload {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.generation-job-card__payload[open] {
+  border-color: var(--border-strong);
+}
+
+.generation-job-card__payload-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0.55rem 0.6rem;
+  cursor: pointer;
+  list-style: none;
+}
+
+.generation-job-card__payload-summary::-webkit-details-marker {
+  display: none;
+}
+
+.generation-job-card__payload-summary span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+}
+
+.generation-job-card__payload-summary strong {
+  color: var(--text);
+  font-size: 0.74rem;
+}
+
+.generation-job-card__payload-body {
+  display: grid;
+  gap: 10px;
+  padding: 0 0.6rem 0.65rem;
+}
+
+.generation-job-card__payload-section {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.generation-job-card__payload-header,
+.generation-job-card__payload-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.generation-job-card__payload-header {
+  justify-content: space-between;
+}
+
+.generation-job-card__payload-header strong {
+  font-size: 0.73rem;
+}
+
+.generation-job-card__payload-action {
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0.32rem 0.45rem;
+  font-size: 0.68rem;
+}
+
+.generation-job-card__payload-preview,
+.generation-job-card__payload-empty {
+  margin: 0;
+  font-size: 0.68rem;
+}
+
+.generation-job-card__payload-preview {
+  max-height: 210px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+  color: #d2d8e2;
+  line-height: 1.45;
+}
+
+.generation-job-card__payload-empty {
+  color: var(--text-muted);
+}
+
 .provider-log-card {
   border: 1px solid var(--border);
   background: #121820;

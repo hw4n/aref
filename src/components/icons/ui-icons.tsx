@@ -222,6 +222,15 @@ export function DuplicateIcon(props: IconProps) {
   );
 }
 
+export function CopyIcon(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <rect height="12" rx="2" width="12" x="8" y="8" />
+      <path d="M5 16V6a1 1 0 0 1 1-1h10" />
+    </IconBase>
+  );
+}
+
 export function DeleteIcon(props: IconProps) {
   return (
     <IconBase {...props}>

@@ -137,5 +137,7 @@ export interface ProviderRequestLogEntry {
   imageCount?: number | null;
   referenceCount?: number | null;
   error?: string | null;
+  requestPayload?: unknown | null;
+  responsePayload?: unknown | null;
   rawJson: string;
 }

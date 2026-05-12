@@ -1,6 +1,7 @@
 use std::{
     collections::BTreeMap,
     env,
+    error::Error as StdError,
     fs::{self, OpenOptions},
     io::{ErrorKind, Write},
     net::TcpListener,
@@ -208,6 +209,8 @@ struct Ima2SidecarRequestLogEntry {
     codex_auth_status: String,
     proxy_managed: bool,
     error: Option<String>,
+    request_payload: Value,
+    response_payload: Option<Value>,
 }
 
 fn now_iso_string() -> String {
@@ -927,6 +930,14 @@ fn normalize_oauth_image_count(value: u32) -> u32 {
     value.clamp(1, 4)
 }
 
+fn ima2_sidecar_request_mode(request: &StartIma2SidecarGenerationRequest) -> &'static str {
+    if request.reference_images.len() == 1 {
+        "edit"
+    } else {
+        "generate"
+    }
+}
+
 fn build_oauth_request_body(
     request: &StartIma2SidecarGenerationRequest,
     prompt: &str,
@@ -970,6 +981,176 @@ fn build_oauth_request_body(
         "tool_choice": "required",
         "stream": stream
     })
+}
+
+fn build_ima2_sidecar_request_payload(
+    request: &StartIma2SidecarGenerationRequest,
+    base_url: &str,
+    stream: bool,
+) -> Value {
+    let normalized_size = normalized_generation_size(&request.settings);
+    let (size, _, _) = generation_size_to_ima2_size(&normalized_size);
+    let prompt = compose_prompt(&request.prompt, request.negative_prompt.as_deref());
+    let quality = normalize_oauth_image_quality(request.settings.quality.as_deref());
+    let moderation = normalize_oauth_image_moderation(request.settings.moderation.as_deref());
+    let reference_images = request
+        .reference_images
+        .iter()
+        .map(|image| {
+            json!({
+                "filename": &image._filename,
+                "mimeType": &image.mime_type,
+                "byteLength": image.bytes.len()
+            })
+        })
+        .collect::<Vec<_>>();
+    let mut user_content = vec![json!({
+        "type": "input_text",
+        "text": prompt
+    })];
+    user_content.extend(reference_images.iter().map(|image| {
+        json!({
+            "type": "input_image",
+            "image": image
+        })
+    }));
+
+    json!({
+        "provider": "ima2-sidecar",
+        "method": "POST",
+        "url": format!("{}/v1/responses", base_url),
+        "clientRequestId": &request.job_id,
+        "mode": ima2_sidecar_request_mode(request),
+        "body": {
+            "model": OAUTH_IMAGE_MODEL,
+            "input": [
+                {
+                    "role": "developer",
+                    "content": OAUTH_IMAGE_DEVELOPER_PROMPT
+                },
+                {
+                    "role": "user",
+                    "content": user_content
+                }
+            ],
+            "tools": [
+                {
+                    "type": "image_generation",
+                    "quality": quality,
+                    "size": size,
+                    "moderation": moderation
+                }
+            ],
+            "tool_choice": "required",
+            "stream": stream
+        }
+    })
+}
+
+fn build_ima2_sidecar_response_payload(
+    status: &str,
+    request_ids: &[String],
+    error: Option<&str>,
+    images: &[Ima2SidecarGeneratedImage],
+) -> Value {
+    let image_payloads = images
+        .iter()
+        .map(|image| {
+            json!({
+                "imagePath": &image.image_path,
+                "thumbnailPath": &image.thumbnail_path,
+                "width": image.width,
+                "height": image.height,
+                "sourceName": &image.source_name
+            })
+        })
+        .collect::<Vec<_>>();
+
+    json!({
+        "status": status,
+        "openaiRequestIds": request_ids,
+        "error": error,
+        "imageCount": images.len(),
+        "images": image_payloads
+    })
+}
+
+fn build_ima2_sidecar_failure_response_payload(
+    app: &AppHandle,
+    base_url: &str,
+    error: &str,
+) -> Value {
+    let proxy_log_path = ima2_sidecar_proxy_log_path(app).ok();
+    let last_proxy_error = proxy_log_path
+        .as_deref()
+        .and_then(last_aref_proxy_error_from_log);
+    let proxy_log_path_text = proxy_log_path
+        .as_ref()
+        .map(|path| path.to_string_lossy().to_string());
+    let hint = if error.contains("connect")
+        || error.contains("Connection refused")
+        || error.contains("10061")
+    {
+        Some("The request did not reach the ChatGPT OAuth proxy. Confirm the proxy is still running and inspect proxyLogPath.")
+    } else if error.contains("timeout") {
+        Some("The ChatGPT OAuth proxy did not respond before the request timeout. Inspect proxyLogPath and retry.")
+    } else {
+        Some("Inspect proxyLogPath for the local OAuth proxy process output.")
+    };
+
+    json!({
+        "status": "failed",
+        "openaiRequestIds": [],
+        "error": error,
+        "imageCount": 0,
+        "images": [],
+        "diagnostic": {
+            "baseUrl": base_url,
+            "endpoint": format!("{}/v1/responses", base_url),
+            "proxyLogPath": proxy_log_path_text,
+            "lastProxyError": last_proxy_error,
+            "hint": hint
+        }
+    })
+}
+
+fn build_ima2_sidecar_log_entry(
+    operation_id: String,
+    request: &StartIma2SidecarGenerationRequest,
+    base_url: &str,
+    status: &str,
+    request_ids: Vec<String>,
+    codex_auth_status: String,
+    proxy_managed: bool,
+    error: Option<String>,
+    response_payload: Option<Value>,
+) -> Ima2SidecarRequestLogEntry {
+    Ima2SidecarRequestLogEntry {
+        timestamp: now_iso_string(),
+        operation_id,
+        request_id: request.job_id.clone(),
+        openai_request_ids: request_ids.clone(),
+        model: OAUTH_IMAGE_MODEL.to_string(),
+        mode: ima2_sidecar_request_mode(request).to_string(),
+        base_url: base_url.to_string(),
+        status: status.to_string(),
+        reference_count: request.reference_images.len(),
+        image_count: request.settings.image_count,
+        prompt_length: request.prompt.len(),
+        has_negative_prompt: request.negative_prompt.is_some(),
+        codex_auth_status,
+        proxy_managed,
+        error: error.clone(),
+        request_payload: build_ima2_sidecar_request_payload(request, base_url, true),
+        response_payload: response_payload.or_else(|| {
+            Some(build_ima2_sidecar_response_payload(
+                status,
+                &request_ids,
+                error.as_deref(),
+                &[],
+            ))
+        }),
+    }
 }
 
 fn extract_generated_images(value: &Value) -> Vec<String> {
@@ -1048,6 +1229,56 @@ fn sanitize_proxy_error(value: &str) -> String {
     }
 
     sanitized.chars().take(900).collect()
+}
+
+fn format_error_source_chain(error: &(dyn StdError + 'static)) -> Vec<String> {
+    let mut sources = Vec::new();
+    let mut current = error.source();
+
+    while let Some(source) = current {
+        let message = source.to_string();
+        if !message.trim().is_empty() {
+            sources.push(message);
+        }
+        current = source.source();
+    }
+
+    sources
+}
+
+fn format_reqwest_error(context: &str, error: &reqwest::Error) -> String {
+    let mut parts = vec![format!("{context}: {error}")];
+
+    if let Some(url) = error.url() {
+        parts.push(format!("url: {url}"));
+    }
+
+    let mut kinds = Vec::new();
+    if error.is_connect() {
+        kinds.push("connect");
+    }
+    if error.is_timeout() {
+        kinds.push("timeout");
+    }
+    if error.is_request() {
+        kinds.push("request");
+    }
+    if error.is_body() {
+        kinds.push("body");
+    }
+    if error.is_decode() {
+        kinds.push("decode");
+    }
+
+    if !kinds.is_empty() {
+        parts.push(format!("kind: {}", kinds.join(", ")));
+    }
+
+    for source in format_error_source_chain(error) {
+        parts.push(format!("caused by: {source}"));
+    }
+
+    sanitize_proxy_error(&parts.join("; "))
 }
 
 fn proxy_probe_error(base_url: &str, error: &str, proxy_log_path: &Path) -> String {
@@ -1350,7 +1581,7 @@ async fn fetch_ima2_sidecar_snapshot(
             last_aref_proxy_error_from_log(&proxy_log_path).or_else(|| {
                 Some(proxy_probe_error(
                     &settings.base_url,
-                    &error.to_string(),
+                    &format_reqwest_error("OAuth proxy /v1/models probe failed", &error),
                     &proxy_log_path,
                 ))
             }),
@@ -1696,7 +1927,8 @@ async fn send_request_with_cancel(
 
     tokio::select! {
         _ = cancel_rx.changed() => Err("cancelled".to_string()),
-        response = request.send() => response.map_err(|error| error.to_string()),
+        response = request.send() => response
+            .map_err(|error| format_reqwest_error("ChatGPT OAuth proxy request failed before a response was received", &error)),
     }
 }
 
@@ -1721,12 +1953,18 @@ async fn read_response_text_with_cancel(
             Ok(None) => return Ok(String::from_utf8_lossy(&body).to_string()),
             Err(error) => {
                 if body.is_empty() {
-                    return Err(error.to_string());
+                    return Err(format_reqwest_error(
+                        "ChatGPT OAuth response stream failed before any body bytes were read",
+                        &error,
+                    ));
                 }
 
                 let partial_body = String::from_utf8_lossy(&body).to_string();
                 if partial_body.trim().is_empty() {
-                    return Err(error.to_string());
+                    return Err(format_reqwest_error(
+                        "ChatGPT OAuth response stream failed with an empty partial body",
+                        &error,
+                    ));
                 }
 
                 return Ok(partial_body);
@@ -1907,11 +2145,7 @@ async fn run_ima2_sidecar_operation(
     codex_auth_status: String,
     proxy_managed: bool,
 ) {
-    let mode = if request.reference_images.len() == 1 {
-        "edit".to_string()
-    } else {
-        "generate".to_string()
-    };
+    let mode = ima2_sidecar_request_mode(&request).to_string();
 
     update_record(&record, |entry| {
         entry.status = "running".to_string();
@@ -1921,23 +2155,17 @@ async fn run_ima2_sidecar_operation(
 
     let _ = append_ima2_sidecar_log(
         &app,
-        &Ima2SidecarRequestLogEntry {
-            timestamp: now_iso_string(),
-            operation_id: operation_id.clone(),
-            request_id: request.job_id.clone(),
-            openai_request_ids: Vec::new(),
-            model: OAUTH_IMAGE_MODEL.to_string(),
-            mode: mode.clone(),
-            base_url: base_url.clone(),
-            status: "running".to_string(),
-            reference_count: request.reference_images.len(),
-            image_count: request.settings.image_count,
-            prompt_length: request.prompt.len(),
-            has_negative_prompt: request.negative_prompt.is_some(),
-            codex_auth_status: codex_auth_status.clone(),
+        &build_ima2_sidecar_log_entry(
+            operation_id.clone(),
+            &request,
+            &base_url,
+            "running",
+            Vec::new(),
+            codex_auth_status.clone(),
             proxy_managed,
-            error: None,
-        },
+            None,
+            None,
+        ),
     );
 
     let result =
@@ -1956,27 +2184,23 @@ async fn run_ima2_sidecar_operation(
                 .await;
                 let _ = append_ima2_sidecar_log(
                     &app,
-                    &Ima2SidecarRequestLogEntry {
-                        timestamp: now_iso_string(),
+                    &build_ima2_sidecar_log_entry(
                         operation_id,
-                        request_id: request.job_id,
-                        openai_request_ids: request_ids,
-                        model: OAUTH_IMAGE_MODEL.to_string(),
-                        mode,
-                        base_url,
-                        status: "cancelled".to_string(),
-                        reference_count: request.reference_images.len(),
-                        image_count: request.settings.image_count,
-                        prompt_length: request.prompt.len(),
-                        has_negative_prompt: request.negative_prompt.is_some(),
+                        &request,
+                        &base_url,
+                        "cancelled",
+                        request_ids,
                         codex_auth_status,
                         proxy_managed,
-                        error: None,
-                    },
+                        None,
+                        None,
+                    ),
                 );
                 return;
             }
 
+            let response_payload =
+                build_ima2_sidecar_response_payload("succeeded", &request_ids, None, &images);
             update_record(&record, |entry| {
                 entry.status = "succeeded".to_string();
                 entry.completed_at = Some(now_iso_string());
@@ -1988,23 +2212,17 @@ async fn run_ima2_sidecar_operation(
             .await;
             let _ = append_ima2_sidecar_log(
                 &app,
-                &Ima2SidecarRequestLogEntry {
-                    timestamp: now_iso_string(),
+                &build_ima2_sidecar_log_entry(
                     operation_id,
-                    request_id: request.job_id,
-                    openai_request_ids: request_ids,
-                    model: OAUTH_IMAGE_MODEL.to_string(),
-                    mode,
-                    base_url,
-                    status: "succeeded".to_string(),
-                    reference_count: request.reference_images.len(),
-                    image_count: request.settings.image_count,
-                    prompt_length: request.prompt.len(),
-                    has_negative_prompt: request.negative_prompt.is_some(),
+                    &request,
+                    &base_url,
+                    "succeeded",
+                    request_ids,
                     codex_auth_status,
                     proxy_managed,
-                    error: None,
-                },
+                    None,
+                    Some(response_payload),
+                ),
             );
         }
         Err(error) if error == "cancelled" => {
@@ -2017,26 +2235,22 @@ async fn run_ima2_sidecar_operation(
             .await;
             let _ = append_ima2_sidecar_log(
                 &app,
-                &Ima2SidecarRequestLogEntry {
-                    timestamp: now_iso_string(),
+                &build_ima2_sidecar_log_entry(
                     operation_id,
-                    request_id: request.job_id,
-                    openai_request_ids: Vec::new(),
-                    model: OAUTH_IMAGE_MODEL.to_string(),
-                    mode,
-                    base_url,
-                    status: "cancelled".to_string(),
-                    reference_count: request.reference_images.len(),
-                    image_count: request.settings.image_count,
-                    prompt_length: request.prompt.len(),
-                    has_negative_prompt: request.negative_prompt.is_some(),
+                    &request,
+                    &base_url,
+                    "cancelled",
+                    Vec::new(),
                     codex_auth_status,
                     proxy_managed,
-                    error: None,
-                },
+                    None,
+                    None,
+                ),
             );
         }
         Err(error) => {
+            let response_payload =
+                build_ima2_sidecar_failure_response_payload(&app, &base_url, &error);
             update_record(&record, |entry| {
                 entry.status = "failed".to_string();
                 entry.completed_at = Some(now_iso_string());
@@ -2046,23 +2260,17 @@ async fn run_ima2_sidecar_operation(
             .await;
             let _ = append_ima2_sidecar_log(
                 &app,
-                &Ima2SidecarRequestLogEntry {
-                    timestamp: now_iso_string(),
+                &build_ima2_sidecar_log_entry(
                     operation_id,
-                    request_id: request.job_id,
-                    openai_request_ids: Vec::new(),
-                    model: OAUTH_IMAGE_MODEL.to_string(),
-                    mode,
-                    base_url,
-                    status: "failed".to_string(),
-                    reference_count: request.reference_images.len(),
-                    image_count: request.settings.image_count,
-                    prompt_length: request.prompt.len(),
-                    has_negative_prompt: request.negative_prompt.is_some(),
+                    &request,
+                    &base_url,
+                    "failed",
+                    Vec::new(),
                     codex_auth_status,
                     proxy_managed,
-                    error: Some(error),
-                },
+                    Some(error),
+                    Some(response_payload),
+                ),
             );
         }
     }
@@ -2166,11 +2374,7 @@ pub async fn start_ima2_sidecar_generation(
         completed_at: None,
         error: None,
         request_id: Some(request.job_id.clone()),
-        mode: Some(if request.reference_images.len() == 1 {
-            "edit".to_string()
-        } else {
-            "generate".to_string()
-        }),
+        mode: Some(ima2_sidecar_request_mode(&request).to_string()),
         images: Vec::new(),
     }));
     let (cancel_tx, cancel_rx) = watch::channel(false);
@@ -2184,27 +2388,17 @@ pub async fn start_ima2_sidecar_generation(
 
     let _ = append_ima2_sidecar_log(
         &app,
-        &Ima2SidecarRequestLogEntry {
-            timestamp: now_iso_string(),
-            operation_id: operation_id.clone(),
-            request_id: request.job_id.clone(),
-            openai_request_ids: Vec::new(),
-            model: OAUTH_IMAGE_MODEL.to_string(),
-            mode: if request.reference_images.len() == 1 {
-                "edit".to_string()
-            } else {
-                "generate".to_string()
-            },
-            base_url: snapshot.base_url.clone(),
-            status: "queued".to_string(),
-            reference_count: request.reference_images.len(),
-            image_count: request.settings.image_count,
-            prompt_length: request.prompt.len(),
-            has_negative_prompt: request.negative_prompt.is_some(),
-            codex_auth_status: snapshot.codex_auth_status.clone(),
-            proxy_managed: snapshot.proxy_managed,
-            error: None,
-        },
+        &build_ima2_sidecar_log_entry(
+            operation_id.clone(),
+            &request,
+            &snapshot.base_url,
+            "queued",
+            Vec::new(),
+            snapshot.codex_auth_status.clone(),
+            snapshot.proxy_managed,
+            None,
+            None,
+        ),
     );
 
     let task_app = app.clone();

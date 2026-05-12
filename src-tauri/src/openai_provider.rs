@@ -17,6 +17,7 @@ use reqwest::{
     Client,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use tauri::{AppHandle, Manager, State};
 use tokio::sync::{watch, Mutex};
 use uuid::Uuid;
@@ -160,6 +161,8 @@ struct OpenAiRequestLogEntry {
     prompt_length: usize,
     has_negative_prompt: bool,
     error: Option<String>,
+    request_payload: Value,
+    response_payload: Option<Value>,
 }
 
 #[derive(Debug, Serialize)]
@@ -390,6 +393,123 @@ fn normalize_openai_image_quality(value: Option<&str>) -> &'static str {
     }
 }
 
+fn openai_request_mode(request: &StartOpenAiGenerationRequest) -> &'static str {
+    if request.reference_images.is_empty() {
+        "generate"
+    } else {
+        "edit"
+    }
+}
+
+fn build_openai_request_payload(request: &StartOpenAiGenerationRequest) -> Value {
+    let normalized_size = normalized_generation_size(&request.settings);
+    let (size, _, _) = generation_size_to_openai_size(&normalized_size);
+    let quality = normalize_openai_image_quality(request.settings.quality.as_deref());
+    let prompt = compose_prompt(&request.prompt, request.negative_prompt.as_deref());
+    let reference_images = request
+        .reference_images
+        .iter()
+        .map(|image| {
+            json!({
+                "filename": &image.filename,
+                "mimeType": &image.mime_type,
+                "byteLength": image.bytes.len()
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let body = if request.reference_images.is_empty() {
+        json!({
+            "model": &request.model,
+            "prompt": prompt,
+            "size": size,
+            "n": request.settings.image_count,
+            "quality": quality,
+            "output_format": "png"
+        })
+    } else {
+        json!({
+            "model": &request.model,
+            "prompt": prompt,
+            "size": size,
+            "n": request.settings.image_count,
+            "quality": quality,
+            "output_format": "png",
+            "image[]": reference_images
+        })
+    };
+
+    json!({
+        "provider": "openai",
+        "method": "POST",
+        "endpoint": if request.reference_images.is_empty() { "/images/generations" } else { "/images/edits" },
+        "clientRequestId": &request.job_id,
+        "mode": openai_request_mode(request),
+        "body": body
+    })
+}
+
+fn build_openai_response_payload(
+    status: &str,
+    request_id: Option<&str>,
+    error: Option<&str>,
+    images: &[OpenAiGeneratedImage],
+) -> Value {
+    let image_payloads = images
+        .iter()
+        .map(|image| {
+            json!({
+                "imagePath": &image.image_path,
+                "thumbnailPath": &image.thumbnail_path,
+                "width": image.width,
+                "height": image.height,
+                "sourceName": &image.source_name
+            })
+        })
+        .collect::<Vec<_>>();
+
+    json!({
+        "status": status,
+        "requestId": request_id,
+        "error": error,
+        "imageCount": images.len(),
+        "images": image_payloads
+    })
+}
+
+fn build_openai_log_entry(
+    operation_id: String,
+    request: &StartOpenAiGenerationRequest,
+    status: &str,
+    openai_request_id: Option<String>,
+    error: Option<String>,
+    response_payload: Option<Value>,
+) -> OpenAiRequestLogEntry {
+    OpenAiRequestLogEntry {
+        timestamp: now_iso_string(),
+        operation_id,
+        client_request_id: request.job_id.clone(),
+        openai_request_id: openai_request_id.clone(),
+        model: request.model.clone(),
+        mode: openai_request_mode(request).to_string(),
+        status: status.to_string(),
+        reference_count: request.reference_images.len(),
+        image_count: request.settings.image_count,
+        prompt_length: request.prompt.len(),
+        has_negative_prompt: request.negative_prompt.is_some(),
+        error: error.clone(),
+        request_payload: build_openai_request_payload(request),
+        response_payload: response_payload.or_else(|| {
+            Some(build_openai_response_payload(
+                status,
+                openai_request_id.as_deref(),
+                error.as_deref(),
+                &[],
+            ))
+        }),
+    }
+}
+
 fn build_openai_headers(
     settings: &ResolvedOpenAiSettings,
     client_request_id: &str,
@@ -464,24 +584,7 @@ async fn run_openai_operation(
             .await;
             let _ = append_openai_log(
                 &app,
-                &OpenAiRequestLogEntry {
-                    timestamp: now_iso_string(),
-                    operation_id,
-                    client_request_id: request.job_id,
-                    openai_request_id: None,
-                    model: request.model,
-                    mode: if request.reference_images.is_empty() {
-                        "generate".to_string()
-                    } else {
-                        "edit".to_string()
-                    },
-                    status: "failed".to_string(),
-                    reference_count: request.reference_images.len(),
-                    image_count: request.settings.image_count,
-                    prompt_length: request.prompt.len(),
-                    has_negative_prompt: request.negative_prompt.is_some(),
-                    error: Some(error),
-                },
+                &build_openai_log_entry(operation_id, &request, "failed", None, Some(error), None),
             );
             return;
         }
@@ -497,33 +600,12 @@ async fn run_openai_operation(
         .await;
         let _ = append_openai_log(
             &app,
-            &OpenAiRequestLogEntry {
-                timestamp: now_iso_string(),
-                operation_id,
-                client_request_id: request.job_id,
-                openai_request_id: None,
-                model: request.model,
-                mode: if request.reference_images.is_empty() {
-                    "generate".to_string()
-                } else {
-                    "edit".to_string()
-                },
-                status: "failed".to_string(),
-                reference_count: request.reference_images.len(),
-                image_count: request.settings.image_count,
-                prompt_length: request.prompt.len(),
-                has_negative_prompt: request.negative_prompt.is_some(),
-                error: Some(error),
-            },
+            &build_openai_log_entry(operation_id, &request, "failed", None, Some(error), None),
         );
         return;
     }
 
-    let mode = if request.reference_images.is_empty() {
-        "generate".to_string()
-    } else {
-        "edit".to_string()
-    };
+    let mode = openai_request_mode(&request).to_string();
     let client_request_id = request.job_id.clone();
 
     update_record(&record, |entry| {
@@ -533,26 +615,13 @@ async fn run_openai_operation(
     .await;
     let _ = append_openai_log(
         &app,
-        &OpenAiRequestLogEntry {
-            timestamp: now_iso_string(),
-            operation_id: operation_id.clone(),
-            client_request_id: client_request_id.clone(),
-            openai_request_id: None,
-            model: request.model.clone(),
-            mode: mode.clone(),
-            status: "running".to_string(),
-            reference_count: request.reference_images.len(),
-            image_count: request.settings.image_count,
-            prompt_length: request.prompt.len(),
-            has_negative_prompt: request.negative_prompt.is_some(),
-            error: None,
-        },
+        &build_openai_log_entry(operation_id.clone(), &request, "running", None, None, None),
     );
 
     let task = execute_openai_request(&app, &settings, &request, &operation_id, &client_request_id);
 
     let result = tokio::select! {
-        _ = cancel_rx.changed() => Err("cancelled".to_string()),
+        _ = cancel_rx.changed() => Err(OpenAiRunError::cancelled()),
         response = task => response,
     };
 
@@ -568,20 +637,14 @@ async fn run_openai_operation(
                 .await;
                 let _ = append_openai_log(
                     &app,
-                    &OpenAiRequestLogEntry {
-                        timestamp: now_iso_string(),
+                    &build_openai_log_entry(
                         operation_id,
-                        client_request_id,
-                        openai_request_id: success.request_id,
-                        model: request.model,
-                        mode,
-                        status: "cancelled".to_string(),
-                        reference_count: request.reference_images.len(),
-                        image_count: request.settings.image_count,
-                        prompt_length: request.prompt.len(),
-                        has_negative_prompt: request.negative_prompt.is_some(),
-                        error: None,
-                    },
+                        &request,
+                        "cancelled",
+                        success.request_id,
+                        None,
+                        None,
+                    ),
                 );
                 return;
             }
@@ -597,23 +660,17 @@ async fn run_openai_operation(
             .await;
             let _ = append_openai_log(
                 &app,
-                &OpenAiRequestLogEntry {
-                    timestamp: now_iso_string(),
+                &build_openai_log_entry(
                     operation_id,
-                    client_request_id,
-                    openai_request_id: success.request_id,
-                    model: request.model,
-                    mode,
-                    status: "succeeded".to_string(),
-                    reference_count: request.reference_images.len(),
-                    image_count: request.settings.image_count,
-                    prompt_length: request.prompt.len(),
-                    has_negative_prompt: request.negative_prompt.is_some(),
-                    error: None,
-                },
+                    &request,
+                    "succeeded",
+                    success.request_id,
+                    None,
+                    Some(success.response_payload),
+                ),
             );
         }
-        Err(error) if error == "cancelled" => {
+        Err(error) if error.is_cancelled() => {
             update_record(&record, |entry| {
                 entry.status = "cancelled".to_string();
                 entry.completed_at = Some(now_iso_string());
@@ -623,46 +680,37 @@ async fn run_openai_operation(
             .await;
             let _ = append_openai_log(
                 &app,
-                &OpenAiRequestLogEntry {
-                    timestamp: now_iso_string(),
-                    operation_id,
-                    client_request_id,
-                    openai_request_id: None,
-                    model: request.model,
-                    mode,
-                    status: "cancelled".to_string(),
-                    reference_count: request.reference_images.len(),
-                    image_count: request.settings.image_count,
-                    prompt_length: request.prompt.len(),
-                    has_negative_prompt: request.negative_prompt.is_some(),
-                    error: None,
-                },
+                &build_openai_log_entry(operation_id, &request, "cancelled", None, None, None),
             );
         }
         Err(error) => {
+            let error_message = error.message;
+            let provider_request_id = error.request_id;
+            let response_payload = error.response_payload.or_else(|| {
+                Some(build_openai_response_payload(
+                    "failed",
+                    provider_request_id.as_deref(),
+                    Some(&error_message),
+                    &[],
+                ))
+            });
             update_record(&record, |entry| {
                 entry.status = "failed".to_string();
                 entry.completed_at = Some(now_iso_string());
-                entry.error = Some(error.clone());
+                entry.error = Some(error_message.clone());
                 entry.images.clear();
             })
             .await;
             let _ = append_openai_log(
                 &app,
-                &OpenAiRequestLogEntry {
-                    timestamp: now_iso_string(),
+                &build_openai_log_entry(
                     operation_id,
-                    client_request_id,
-                    openai_request_id: None,
-                    model: request.model,
-                    mode,
-                    status: "failed".to_string(),
-                    reference_count: request.reference_images.len(),
-                    image_count: request.settings.image_count,
-                    prompt_length: request.prompt.len(),
-                    has_negative_prompt: request.negative_prompt.is_some(),
-                    error: Some(error),
-                },
+                    &request,
+                    "failed",
+                    provider_request_id,
+                    Some(error_message),
+                    response_payload,
+                ),
             );
         }
     }
@@ -673,6 +721,32 @@ struct SuccessfulOpenAiRun {
     completed_at: String,
     request_id: Option<String>,
     images: Vec<OpenAiGeneratedImage>,
+    response_payload: Value,
+}
+
+#[derive(Debug)]
+struct OpenAiRunError {
+    message: String,
+    request_id: Option<String>,
+    response_payload: Option<Value>,
+}
+
+impl OpenAiRunError {
+    fn message(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            request_id: None,
+            response_payload: None,
+        }
+    }
+
+    fn cancelled() -> Self {
+        Self::message("cancelled")
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.message == "cancelled"
+    }
 }
 
 async fn execute_openai_request(
@@ -681,12 +755,13 @@ async fn execute_openai_request(
     request: &StartOpenAiGenerationRequest,
     operation_id: &str,
     client_request_id: &str,
-) -> Result<SuccessfulOpenAiRun, String> {
-    let headers = build_openai_headers(settings, client_request_id)?;
+) -> Result<SuccessfulOpenAiRun, OpenAiRunError> {
+    let headers =
+        build_openai_headers(settings, client_request_id).map_err(OpenAiRunError::message)?;
     let client = Client::builder()
         .timeout(Duration::from_secs(OPENAI_REQUEST_TIMEOUT_SECONDS))
         .build()
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| OpenAiRunError::message(error.to_string()))?;
     let normalized_size = normalized_generation_size(&request.settings);
     let (size, width, height) = generation_size_to_openai_size(&normalized_size);
     let quality = normalize_openai_image_quality(request.settings.quality.as_deref());
@@ -706,7 +781,7 @@ async fn execute_openai_request(
             })
             .send()
             .await
-            .map_err(|error| error.to_string())?
+            .map_err(|error| OpenAiRunError::message(error.to_string()))?
     } else {
         let mut form = Form::new()
             .text("model", request.model.clone())
@@ -720,7 +795,7 @@ async fn execute_openai_request(
             let part = Part::bytes(image.bytes.clone())
                 .file_name(image.filename.clone())
                 .mime_str(&image.mime_type)
-                .map_err(|error| error.to_string())?;
+                .map_err(|error| OpenAiRunError::message(error.to_string()))?;
             form = form.part("image[]", part);
         }
 
@@ -730,7 +805,7 @@ async fn execute_openai_request(
             .multipart(form)
             .send()
             .await
-            .map_err(|error| error.to_string())?
+            .map_err(|error| OpenAiRunError::message(error.to_string()))?
     };
 
     let request_id = response
@@ -741,7 +816,10 @@ async fn execute_openai_request(
     let status = response.status();
 
     if !status.is_success() {
-        let error_text = response.text().await.map_err(|error| error.to_string())?;
+        let error_text = response
+            .text()
+            .await
+            .map_err(|error| OpenAiRunError::message(error.to_string()))?;
         let parsed_message = serde_json::from_str::<OpenAiErrorEnvelope>(&error_text)
             .ok()
             .and_then(|envelope| {
@@ -757,35 +835,50 @@ async fn execute_openai_request(
                     }
                 })
             })
-            .unwrap_or(error_text);
+            .unwrap_or_else(|| error_text.clone());
+        let response_body = serde_json::from_str::<Value>(&error_text)
+            .ok()
+            .unwrap_or_else(|| Value::String(error_text.clone()));
 
-        return Err(format!(
+        let message = format!(
             "OpenAI request failed ({}): {}",
             status.as_u16(),
             parsed_message
-        ));
+        );
+
+        return Err(OpenAiRunError {
+            message,
+            request_id: request_id.clone(),
+            response_payload: Some(json!({
+                "status": "failed",
+                "statusCode": status.as_u16(),
+                "requestId": request_id,
+                "body": response_body
+            })),
+        });
     }
 
     let payload = response
         .json::<OpenAiImageApiResponse>()
         .await
-        .map_err(|error| error.to_string())?;
-    let generated_directory = openai_generated_directory(app)?;
+        .map_err(|error| OpenAiRunError::message(error.to_string()))?;
+    let generated_directory = openai_generated_directory(app).map_err(OpenAiRunError::message)?;
     let completed_at = now_iso_string();
     let mut images = Vec::with_capacity(payload.data.len());
 
     for (index, image) in payload.data.into_iter().enumerate() {
-        let encoded = image
-            .b64_json
-            .ok_or_else(|| "OpenAI response did not include image bytes.".to_string())?;
+        let encoded = image.b64_json.ok_or_else(|| {
+            OpenAiRunError::message("OpenAI response did not include image bytes.")
+        })?;
         let bytes = STANDARD
             .decode(encoded)
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| OpenAiRunError::message(error.to_string()))?;
         let (detected_width, detected_height) =
             image_dimensions_from_bytes(&bytes).unwrap_or((width, height));
         let file_name = format!("{operation_id}-{}.png", index + 1);
         let target_path = generated_directory.join(&file_name);
-        fs::write(&target_path, &bytes).map_err(|error| error.to_string())?;
+        fs::write(&target_path, &bytes)
+            .map_err(|error| OpenAiRunError::message(error.to_string()))?;
         images.push(OpenAiGeneratedImage {
             image_path: normalize_path(&target_path),
             thumbnail_path: None,
@@ -795,10 +888,14 @@ async fn execute_openai_request(
         });
     }
 
+    let response_payload =
+        build_openai_response_payload("succeeded", request_id.as_deref(), None, &images);
+
     Ok(SuccessfulOpenAiRun {
         completed_at,
         request_id,
         images,
+        response_payload,
     })
 }
 
@@ -899,34 +996,9 @@ pub async fn start_openai_generation(
         },
     );
 
-    let log_operation_id = operation_id.clone();
-    let log_request = request.job_id.clone();
-    let log_model = request.model.clone();
-    let log_mode = if request.reference_images.is_empty() {
-        "generate".to_string()
-    } else {
-        "edit".to_string()
-    };
-    let log_reference_count = request.reference_images.len();
-    let log_image_count = request.settings.image_count;
-    let log_prompt_length = request.prompt.len();
-    let log_has_negative_prompt = request.negative_prompt.is_some();
     append_openai_log(
         &app,
-        &OpenAiRequestLogEntry {
-            timestamp: now_iso_string(),
-            operation_id: log_operation_id,
-            client_request_id: log_request,
-            openai_request_id: None,
-            model: log_model,
-            mode: log_mode,
-            status: "queued".to_string(),
-            reference_count: log_reference_count,
-            image_count: log_image_count,
-            prompt_length: log_prompt_length,
-            has_negative_prompt: log_has_negative_prompt,
-            error: None,
-        },
+        &build_openai_log_entry(operation_id.clone(), &request, "queued", None, None, None),
     )?;
 
     let task_app = app.clone();
