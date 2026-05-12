@@ -192,6 +192,7 @@ describe("ima2 sidecar generation provider", () => {
             filename: "reference-edit.jpg",
             mimeType: "image/jpeg",
             bytes: [9, 8, 7, 6],
+            originalByteLength: 4,
           },
         ],
       }),

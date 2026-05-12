@@ -16,6 +16,7 @@ export interface GenerationSheetDraft {
     size: GenerationImageSize;
     quality: GenerationImageQuality;
     moderation: GenerationModeration;
+    compressReferenceImages?: boolean;
   };
   pinnedAssetIds: ID[] | null;
   isExplicitlyOpened: boolean;

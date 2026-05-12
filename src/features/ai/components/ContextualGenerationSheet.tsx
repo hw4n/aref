@@ -113,6 +113,7 @@ export function ContextualGenerationSheet({
   const allSelectedHidden = selectedAssets.length > 0 && selectedAssets.every((asset) => asset.hidden);
   const canSubmitGeneration = generationDraft.prompt.trim().length > 0 && Boolean(activeProvider);
   const isOAuthProvider = activeProvider?.id === "ima2-sidecar";
+  const compressReferenceImages = generationDraft.settings.compressReferenceImages ?? true;
 
   const handleRemoveReference = (assetId: string) => {
     const sourceIds = generationDraft.pinnedAssetIds ?? referenceAssetIds;
@@ -391,6 +392,23 @@ export function ContextualGenerationSheet({
             </label>
           </div>
         </div>
+
+        <label className="toggle-row generation-sheet__upload-toggle" title="Compress selected reference images before upload">
+          <span>
+            <strong>Compress refs</strong>
+          </span>
+          <input
+            checked={compressReferenceImages}
+            type="checkbox"
+            onChange={(event) =>
+              setGenerationDraft({
+                settings: {
+                  compressReferenceImages: event.currentTarget.checked,
+                },
+              })
+            }
+          />
+        </label>
 
         <button className="inspector-panel__submit" disabled={!canSubmitGeneration} onClick={handleSubmitGeneration}>
           <SparklesIcon size={15} />

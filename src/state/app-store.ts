@@ -227,6 +227,7 @@ function createDefaultGenerationDraft(): GenerationSheetDraft {
       size: "auto",
       quality: "auto",
       moderation: "low",
+      compressReferenceImages: true,
     },
     pinnedAssetIds: null,
     isExplicitlyOpened: false,

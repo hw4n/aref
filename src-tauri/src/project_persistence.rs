@@ -270,6 +270,7 @@ pub struct RuntimeGenerationSettings {
     size: String,
     quality: String,
     moderation: String,
+    compress_reference_images: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -281,6 +282,7 @@ struct RawRuntimeGenerationSettings {
     aspect_ratio: Option<String>,
     quality: Option<String>,
     moderation: Option<String>,
+    compress_reference_images: Option<bool>,
 }
 
 fn default_runtime_image_count() -> u32 {
@@ -339,6 +341,7 @@ impl<'de> Deserialize<'de> for RuntimeGenerationSettings {
             size: normalize_runtime_generation_size(raw.size, raw.aspect_ratio),
             quality: normalize_runtime_generation_quality(raw.quality),
             moderation: normalize_runtime_generation_moderation(raw.moderation),
+            compress_reference_images: raw.compress_reference_images.unwrap_or(true),
         })
     }
 }
@@ -1789,6 +1792,7 @@ mod tests {
         assert_eq!(settings.size, "2048x1152");
         assert_eq!(settings.quality, "medium");
         assert_eq!(settings.moderation, "auto");
+        assert!(settings.compress_reference_images);
     }
 
     #[test]

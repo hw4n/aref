@@ -2495,6 +2495,11 @@ button:disabled {
   background: #3277f6;
 }
 
+.generation-sheet__upload-toggle {
+  min-height: 42px;
+  padding: 0.6rem 0.7rem;
+}
+
 .inspector-panel__tabs {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);

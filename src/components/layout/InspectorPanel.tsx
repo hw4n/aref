@@ -135,19 +135,25 @@ function GenerationJobCard({
   const canCancel = job.status === "queued" || job.status === "running";
   const canRerun = !canCancel && missingReferenceCount === 0;
   const canRemove = !canCancel;
+  const canReuseReferences = missingReferenceCount === 0;
   const resultCount = job.resultAssetIds.length;
   const reuseJobRequest = () => {
     setGenerationDraft({
       prompt: job.request.prompt,
       negativePrompt: job.request.negativePrompt ?? "",
-      pinnedAssetIds: [],
+      provider: job.request.provider,
+      model: job.request.model,
+      settings: job.request.settings,
+      pinnedAssetIds: canReuseReferences ? job.request.selectedAssetIds : [],
       isExplicitlyOpened: true,
     });
 
     pushToast({
       kind: "success",
-      title: "Prompt reused",
-      description: "Only the prompt text was loaded. References were not copied.",
+      title: "Job reused",
+      description: canReuseReferences
+        ? `${job.request.selectedAssetIds.length} reference${job.request.selectedAssetIds.length === 1 ? "" : "s"} loaded with the prompt.`
+        : "Only the prompt was loaded because original references are missing.",
     });
   };
 
@@ -285,7 +291,11 @@ function GenerationJobCard({
             <span>Rerun</span>
           </button>
         )}
-        <button className="generation-job-card__action" onClick={reuseJobRequest} title="Reuse prompt only">
+        <button
+          className="generation-job-card__action"
+          onClick={reuseJobRequest}
+          title={canReuseReferences ? "Reuse prompt, refs, and settings" : "Reuse prompt only because references are missing"}
+        >
           <ReuseJobIcon size={14} />
           <span>Reuse</span>
         </button>

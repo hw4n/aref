@@ -91,6 +91,7 @@ export function normalizeGenerationDraft(input: StoredGenerationDraft | null | u
       size: normalizeSize(settings.size, settings.aspectRatio),
       quality: normalizeQuality(settings.quality),
       moderation: normalizeModeration(settings.moderation),
+      compressReferenceImages: settings.compressReferenceImages !== false,
     },
   };
 }

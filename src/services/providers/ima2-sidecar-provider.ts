@@ -17,6 +17,8 @@ import {
   type Ima2SidecarReferenceImagePayload,
 } from "@/features/ai/ima2-sidecar/ima2-sidecar-runtime";
 
+import { compressReferenceImagePayload } from "./reference-image-optimization";
+
 const IMA2_SIDECAR_POLL_INTERVAL_MS = 650;
 const IMA2_SIDECAR_MODEL = "gpt-5.5";
 const SIDE_CAR_SUPPORTED_REFERENCE_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
@@ -109,6 +111,7 @@ function inferExtension(asset: GenerationProviderInvocation["referenceAssets"][n
 async function readReferenceImagePayload(
   asset: GenerationProviderInvocation["referenceAssets"][number],
   index: number,
+  compressReferenceImages: boolean,
 ): Promise<Ima2SidecarReferenceImagePayload> {
   const fallbackMimeType = toSupportedMimeType(inferMimeTypeFromSource(asset.sourceName ?? asset.imagePath));
   let bytes: number[] | null = null;
@@ -141,11 +144,15 @@ async function readReferenceImagePayload(
   const baseName = sanitizeFileName(asset.sourceName ?? `reference-${index + 1}`);
   const filename = baseName.includes(".") ? baseName : `${baseName}.${extension}`;
 
-  return {
-    filename,
-    mimeType,
-    bytes,
-  };
+  return compressReferenceImagePayload(
+    {
+      filename,
+      mimeType,
+      bytes,
+      originalByteLength: bytes.length,
+    },
+    compressReferenceImages,
+  );
 }
 
 export const ima2SidecarGenerationProvider: OneShotGenerationProviderAdapter = {
@@ -163,8 +170,11 @@ export const ima2SidecarGenerationProvider: OneShotGenerationProviderAdapter = {
       throw createAbortError();
     }
 
+    const compressReferenceImages = invocation.request.settings.compressReferenceImages !== false;
     const referenceImages = await Promise.all(
-      invocation.referenceAssets.map((asset, index) => readReferenceImagePayload(asset, index)),
+      invocation.referenceAssets.map((asset, index) =>
+        readReferenceImagePayload(asset, index, compressReferenceImages),
+      ),
     );
 
     const submission = await startIma2SidecarGeneration({

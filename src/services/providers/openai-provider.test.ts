@@ -192,6 +192,7 @@ describe("openai generation provider", () => {
             filename: "reference-one.jpg",
             mimeType: "image/jpeg",
             bytes: [1, 2, 3, 4],
+            originalByteLength: 4,
           },
         ],
       }),

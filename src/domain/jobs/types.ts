@@ -24,6 +24,7 @@ export interface GenerationSettings {
   size: GenerationImageSize;
   quality: GenerationImageQuality;
   moderation: GenerationModeration;
+  compressReferenceImages?: boolean;
 }
 
 export interface GenerationRequest {

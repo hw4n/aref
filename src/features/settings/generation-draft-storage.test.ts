@@ -28,6 +28,7 @@ describe("generation draft storage", () => {
           size: "2048x1152",
           quality: "high",
           moderation: "auto",
+          compressReferenceImages: false,
         },
         pinnedAssetIds: ["asset-1"],
         isExplicitlyOpened: true,
@@ -48,6 +49,7 @@ describe("generation draft storage", () => {
         size: "2048x1152",
         quality: "high",
         moderation: "auto",
+        compressReferenceImages: false,
       },
     });
   });
@@ -65,6 +67,7 @@ describe("generation draft storage", () => {
     ).toMatchObject({
       size: "2048x1152",
       quality: "medium",
+      compressReferenceImages: true,
     });
   });
 });

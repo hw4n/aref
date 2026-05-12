@@ -14,6 +14,7 @@ export interface OpenAiReferenceImagePayload {
   filename: string;
   mimeType: string;
   bytes: number[];
+  originalByteLength?: number;
 }
 
 export interface StartOpenAiGenerationInput {

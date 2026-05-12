@@ -161,6 +161,7 @@ pub struct Ima2SidecarReferenceImage {
     _filename: String,
     mime_type: String,
     bytes: Vec<u8>,
+    original_byte_length: Option<usize>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1000,7 +1001,11 @@ fn build_ima2_sidecar_request_payload(
             json!({
                 "filename": &image._filename,
                 "mimeType": &image.mime_type,
-                "byteLength": image.bytes.len()
+                "byteLength": image.bytes.len(),
+                "originalByteLength": image.original_byte_length.unwrap_or(image.bytes.len()),
+                "compressed": image.original_byte_length
+                    .map(|original_byte_length| original_byte_length > image.bytes.len())
+                    .unwrap_or(false)
             })
         })
         .collect::<Vec<_>>();
@@ -2935,6 +2940,7 @@ mod tests {
                 _filename: "ref.png".to_string(),
                 mime_type: "image/png".to_string(),
                 bytes: vec![1, 2, 3],
+                original_byte_length: Some(3),
             }],
         };
 

@@ -116,6 +116,7 @@ pub struct OpenAiReferenceImage {
     filename: String,
     mime_type: String,
     bytes: Vec<u8>,
+    original_byte_length: Option<usize>,
 }
 
 #[derive(Debug, Serialize)]
@@ -413,7 +414,11 @@ fn build_openai_request_payload(request: &StartOpenAiGenerationRequest) -> Value
             json!({
                 "filename": &image.filename,
                 "mimeType": &image.mime_type,
-                "byteLength": image.bytes.len()
+                "byteLength": image.bytes.len(),
+                "originalByteLength": image.original_byte_length.unwrap_or(image.bytes.len()),
+                "compressed": image.original_byte_length
+                    .map(|original_byte_length| original_byte_length > image.bytes.len())
+                    .unwrap_or(false)
             })
         })
         .collect::<Vec<_>>();

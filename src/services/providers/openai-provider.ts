@@ -17,6 +17,8 @@ import {
   type OpenAiReferenceImagePayload,
 } from "@/features/ai/openai/openai-runtime";
 
+import { compressReferenceImagePayload } from "./reference-image-optimization";
+
 const OPENAI_POLL_INTERVAL_MS = 650;
 const OPENAI_SUPPORTED_REFERENCE_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
 
@@ -108,6 +110,7 @@ function toSupportedMimeType(value: string | null | undefined) {
 async function readReferenceImagePayload(
   asset: GenerationProviderInvocation["referenceAssets"][number],
   index: number,
+  compressReferenceImages: boolean,
 ): Promise<OpenAiReferenceImagePayload> {
   const fallbackMimeType = toSupportedMimeType(inferMimeTypeFromSource(asset.sourceName ?? asset.imagePath));
   let bytes: number[] | null = null;
@@ -140,11 +143,15 @@ async function readReferenceImagePayload(
   const baseName = sanitizeFileName(asset.sourceName ?? `reference-${index + 1}`);
   const filename = baseName.includes(".") ? baseName : `${baseName}.${extension}`;
 
-  return {
-    filename,
-    mimeType,
-    bytes,
-  };
+  return compressReferenceImagePayload(
+    {
+      filename,
+      mimeType,
+      bytes,
+      originalByteLength: bytes.length,
+    },
+    compressReferenceImages,
+  );
 }
 
 export const openAiGenerationProvider: OneShotGenerationProviderAdapter = {
@@ -167,8 +174,11 @@ export const openAiGenerationProvider: OneShotGenerationProviderAdapter = {
       throw createAbortError();
     }
 
+    const compressReferenceImages = invocation.request.settings.compressReferenceImages !== false;
     const referenceImages = await Promise.all(
-      invocation.referenceAssets.map((asset, index) => readReferenceImagePayload(asset, index)),
+      invocation.referenceAssets.map((asset, index) =>
+        readReferenceImagePayload(asset, index, compressReferenceImages),
+      ),
     );
 
     const submission = await startOpenAiGeneration({
