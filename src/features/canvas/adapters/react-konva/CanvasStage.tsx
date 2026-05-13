@@ -264,6 +264,7 @@ function GenerationJobPlaceholderItem({
   const visibleReferences = referenceAssets.slice(0, 3);
   const overflowReferenceCount = Math.max(0, referenceAssets.length - visibleReferences.length);
   const promptSummary = job.request.prompt.trim() || "Generating image";
+  const suppressDragForPanRef = useRef(false);
 
   return (
     <Group
@@ -271,13 +272,24 @@ function GenerationJobPlaceholderItem({
       y={job.canvasPlacement.y}
       draggable={!isPanMode}
       onDragStart={(event) => {
+        if (isPanMode || suppressDragForPanRef.current) {
+          event.target.stopDrag();
+          return;
+        }
+
         event.cancelBubble = true;
         onInteractionActiveChange(true);
       }}
       onMouseDown={(event) => {
-        if (!isPanMode) {
+        const mouseEvent = event.evt as MouseEvent;
+        suppressDragForPanRef.current = isPanMode || mouseEvent.button === 1;
+
+        if (!suppressDragForPanRef.current && mouseEvent.button === 0) {
           event.cancelBubble = true;
         }
+      }}
+      onMouseUp={() => {
+        suppressDragForPanRef.current = false;
       }}
       onTouchStart={(event) => {
         if (!isPanMode) {
@@ -295,6 +307,11 @@ function GenerationJobPlaceholderItem({
         }
       }}
       onDragMove={(event) => {
+        if (isPanMode || suppressDragForPanRef.current) {
+          event.target.stopDrag();
+          return;
+        }
+
         event.cancelBubble = true;
         onDrag(job.id, {
           x: event.target.x(),
@@ -302,6 +319,12 @@ function GenerationJobPlaceholderItem({
         });
       }}
       onDragEnd={(event) => {
+        if (suppressDragForPanRef.current) {
+          suppressDragForPanRef.current = false;
+          event.target.stopDrag();
+          return;
+        }
+
         event.cancelBubble = true;
         onDrag(job.id, {
           x: event.target.x(),
