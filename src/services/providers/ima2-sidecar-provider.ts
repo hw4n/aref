@@ -18,8 +18,10 @@ import {
 } from "@/features/ai/ima2-sidecar/ima2-sidecar-runtime";
 
 import { compressReferenceImagePayload } from "./reference-image-optimization";
+import { mapWithConcurrency } from "./generation-concurrency";
 
 const IMA2_SIDECAR_POLL_INTERVAL_MS = 650;
+const REFERENCE_PREP_CONCURRENCY = 2;
 const IMA2_SIDECAR_MODEL = "gpt-5.5";
 const SIDE_CAR_SUPPORTED_REFERENCE_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
 
@@ -171,10 +173,11 @@ export const ima2SidecarGenerationProvider: OneShotGenerationProviderAdapter = {
     }
 
     const compressReferenceImages = invocation.request.settings.compressReferenceImages !== false;
-    const referenceImages = await Promise.all(
-      invocation.referenceAssets.map((asset, index) =>
-        readReferenceImagePayload(asset, index, compressReferenceImages),
-      ),
+    const referenceImages = await mapWithConcurrency(
+      invocation.referenceAssets,
+      REFERENCE_PREP_CONCURRENCY,
+      options.signal,
+      (asset, index) => readReferenceImagePayload(asset, index, compressReferenceImages),
     );
 
     const submission = await startIma2SidecarGeneration({

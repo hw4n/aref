@@ -36,6 +36,7 @@ const IMA2_SIDECAR_HEAVY_REQUEST_TIMEOUT_SECONDS: u64 = 900;
 const IMA2_SIDECAR_HEALTH_TIMEOUT_SECONDS: u64 = 3;
 const IMA2_SIDECAR_PROXY_LOG_TAIL_LINES: usize = 80;
 const IMA2_SIDECAR_PROXY_LOG_TAIL_CHARS: usize = 12_000;
+const IMA2_SIDECAR_OAUTH_CONCURRENCY_LIMIT: usize = 2;
 const IMA2_SIDECAR_PROXY_WARMUP_MILLISECONDS: u64 = 900;
 const IMA2_SIDECAR_PROXY_READY_TIMEOUT_MILLISECONDS: u64 = 12_000;
 const IMA2_SIDECAR_PROXY_READY_POLL_MILLISECONDS: u64 = 750;
@@ -72,7 +73,7 @@ struct ManagedIma2Proxy {
 
 fn ima2_oauth_generation_semaphore() -> Arc<Semaphore> {
     IMA2_OAUTH_GENERATION_SEMAPHORE
-        .get_or_init(|| Arc::new(Semaphore::new(1)))
+        .get_or_init(|| Arc::new(Semaphore::new(IMA2_SIDECAR_OAUTH_CONCURRENCY_LIMIT)))
         .clone()
 }
 
@@ -421,17 +422,28 @@ fn ima2_sidecar_reference_byte_summary(
     )
 }
 
-fn ima2_sidecar_request_timeout_seconds(request: &StartIma2SidecarGenerationRequest) -> u64 {
+fn is_heavy_ima2_sidecar_request(request: &StartIma2SidecarGenerationRequest) -> bool {
     let normalized_size = normalized_generation_size(&request.settings);
     let (_, original_reference_bytes, _) = ima2_sidecar_reference_byte_summary(request);
-    let is_heavy_request = matches!(normalized_size.as_str(), "3840x2160" | "2160x3840")
-        || request.reference_images.len() >= 3
-        || original_reference_bytes >= 20 * 1024 * 1024;
 
-    if is_heavy_request {
+    matches!(normalized_size.as_str(), "3840x2160" | "2160x3840")
+        || request.reference_images.len() >= 3
+        || original_reference_bytes >= 20 * 1024 * 1024
+}
+
+fn ima2_sidecar_request_timeout_seconds(request: &StartIma2SidecarGenerationRequest) -> u64 {
+    if is_heavy_ima2_sidecar_request(request) {
         IMA2_SIDECAR_HEAVY_REQUEST_TIMEOUT_SECONDS
     } else {
         IMA2_SIDECAR_REQUEST_TIMEOUT_SECONDS
+    }
+}
+
+fn ima2_sidecar_oauth_concurrency_permits(request: &StartIma2SidecarGenerationRequest) -> usize {
+    if is_heavy_ima2_sidecar_request(request) {
+        IMA2_SIDECAR_OAUTH_CONCURRENCY_LIMIT
+    } else {
+        1
     }
 }
 
@@ -1036,6 +1048,7 @@ fn build_ima2_sidecar_request_payload(
     let quality = normalize_oauth_image_quality(request.settings.quality.as_deref());
     let moderation = normalize_oauth_image_moderation(request.settings.moderation.as_deref());
     let timeout_seconds = ima2_sidecar_request_timeout_seconds(request);
+    let concurrency_permits = ima2_sidecar_oauth_concurrency_permits(request);
     let reference_images = request
         .reference_images
         .iter()
@@ -1069,7 +1082,10 @@ fn build_ima2_sidecar_request_payload(
         "clientRequestId": &request.job_id,
         "mode": ima2_sidecar_request_mode(request),
         "timeoutSeconds": timeout_seconds,
-        "serializedProxyRequests": true,
+        "oauthConcurrencyLimit": IMA2_SIDECAR_OAUTH_CONCURRENCY_LIMIT,
+        "oauthConcurrencyPermits": concurrency_permits,
+        "exclusiveProxyRequest": concurrency_permits == IMA2_SIDECAR_OAUTH_CONCURRENCY_LIMIT,
+        "serializedProxyRequests": concurrency_permits == IMA2_SIDECAR_OAUTH_CONCURRENCY_LIMIT,
         "body": {
             "model": OAUTH_IMAGE_MODEL,
             "input": [
@@ -1116,7 +1132,10 @@ fn build_ima2_sidecar_request_diagnostic(request: &StartIma2SidecarGenerationReq
         "moderation": normalize_oauth_image_moderation(request.settings.moderation.as_deref()),
         "stream": true,
         "timeoutSeconds": ima2_sidecar_request_timeout_seconds(request),
-        "serializedProxyRequests": true,
+        "oauthConcurrencyLimit": IMA2_SIDECAR_OAUTH_CONCURRENCY_LIMIT,
+        "oauthConcurrencyPermits": ima2_sidecar_oauth_concurrency_permits(request),
+        "exclusiveProxyRequest": ima2_sidecar_oauth_concurrency_permits(request) == IMA2_SIDECAR_OAUTH_CONCURRENCY_LIMIT,
+        "serializedProxyRequests": ima2_sidecar_oauth_concurrency_permits(request) == IMA2_SIDECAR_OAUTH_CONCURRENCY_LIMIT,
         "referenceCount": request.reference_images.len(),
         "referenceByteLength": reference_byte_length,
         "referenceOriginalByteLength": reference_original_byte_length,
@@ -2216,9 +2235,10 @@ async fn execute_ima2_sidecar_request(
     }
 
     let oauth_generation_semaphore = ima2_oauth_generation_semaphore();
+    let oauth_generation_permits = ima2_sidecar_oauth_concurrency_permits(request) as u32;
     let _oauth_generation_permit = tokio::select! {
         _ = cancel_rx.changed() => return Err("cancelled".to_string()),
-        permit = oauth_generation_semaphore.acquire_owned() => permit
+        permit = oauth_generation_semaphore.acquire_many_owned(oauth_generation_permits) => permit
             .map_err(|_| "ChatGPT OAuth generation queue is closed.".to_string())?,
     };
     let timeout_seconds = ima2_sidecar_request_timeout_seconds(request);
@@ -2764,6 +2784,10 @@ mod tests {
             ima2_sidecar_request_timeout_seconds(&request),
             IMA2_SIDECAR_HEAVY_REQUEST_TIMEOUT_SECONDS
         );
+        assert_eq!(
+            ima2_sidecar_oauth_concurrency_permits(&request),
+            IMA2_SIDECAR_OAUTH_CONCURRENCY_LIMIT
+        );
     }
 
     #[test]
@@ -2794,7 +2818,13 @@ mod tests {
         assert_eq!(diagnostic["referenceByteLength"], 4);
         assert_eq!(diagnostic["referenceOriginalByteLength"], 16);
         assert_eq!(diagnostic["compressedReferenceCount"], 1);
-        assert_eq!(diagnostic["serializedProxyRequests"], true);
+        assert_eq!(
+            diagnostic["oauthConcurrencyLimit"],
+            IMA2_SIDECAR_OAUTH_CONCURRENCY_LIMIT
+        );
+        assert_eq!(diagnostic["oauthConcurrencyPermits"], 1);
+        assert_eq!(diagnostic["exclusiveProxyRequest"], false);
+        assert_eq!(diagnostic["serializedProxyRequests"], false);
     }
 
     #[test]

@@ -3,6 +3,10 @@ import { useCallback, useEffect } from "react";
 import { isImageAsset } from "@/domain/assets/types";
 import type { GenerationRequest } from "@/domain/jobs/types";
 import { getGenerationProvider, listGenerationProviders } from "@/services/providers/provider-registry";
+import {
+  getGenerationConcurrencyPlan,
+  runGenerationWithConcurrency,
+} from "@/services/providers/generation-concurrency";
 import { useAppStore } from "@/state/app-store";
 
 const activeGenerationControllers = new Map<string, AbortController>();
@@ -92,24 +96,39 @@ export function useGenerationHarness(options: UseGenerationHarnessOptions = {}) 
       activeGenerationControllers.set(jobId, controller);
 
       try {
-        const result = await provider.generateImages(
-          {
-            jobId,
-            request: imageRequest,
-            referenceAssets,
-          },
-          {
-            signal: controller.signal,
-            onStatusChange: () => {
-              runGenerationJob(jobId);
-              appendDiagnosticLog({
-                level: "info",
-                scope: "generation",
-                title: "Generation running",
-                message: `${provider.label} is generating images for job ${jobId}.`,
-              });
-            },
-          },
+        const invocation = {
+          jobId,
+          request: imageRequest,
+          referenceAssets,
+        };
+        const concurrencyPlan = getGenerationConcurrencyPlan(invocation);
+        appendDiagnosticLog({
+          level: "info",
+          scope: "generation",
+          title: "Generation scheduled",
+          message: `${provider.label} is using ${concurrencyPlan.permits}/${concurrencyPlan.capacity} generation slots.`,
+          details: concurrencyPlan.isHeavy ? "Large or ref-heavy jobs reserve extra capacity." : null,
+        });
+
+        const result = await runGenerationWithConcurrency(
+          invocation,
+          controller.signal,
+          () =>
+            provider.generateImages(
+              invocation,
+              {
+                signal: controller.signal,
+                onStatusChange: () => {
+                  runGenerationJob(jobId);
+                  appendDiagnosticLog({
+                    level: "info",
+                    scope: "generation",
+                    title: "Generation running",
+                    message: `${provider.label} is generating images for job ${jobId}.`,
+                  });
+                },
+              },
+            ),
         );
 
         const generatedAssetIds = completeGenerationJob(jobId, result);
