@@ -32,6 +32,20 @@ import type { Point } from "@/domain/shared/types";
 import { useCanvasShortcuts } from "@/features/canvas/hooks/use-canvas-shortcuts";
 import { useStageContainerSize } from "@/features/canvas/hooks/use-stage-container-size";
 import {
+  CANVAS_RENDER_SETTLE_MS,
+  getCanvasRenderMode,
+  shouldUseCanvasPreviewImage,
+  type CanvasRenderMode,
+} from "@/features/canvas/utils/render-mode";
+import {
+  CANVAS_PRELOAD_OVERSCAN_SCREENS,
+  CANVAS_RETAIN_OVERSCAN_SCREENS,
+  CANVAS_RENDER_OVERSCAN_SCREENS,
+  assetIntersectsViewport,
+  getCameraOverscanViewport,
+  getStableRenderAssetIds,
+} from "@/features/canvas/utils/viewport-rendering";
+import {
   copyAssetsToClipboard,
   type ClipboardCopyResult,
 } from "@/features/canvas/utils/selection-clipboard";
@@ -39,6 +53,7 @@ import {
   ROTATION_SNAP_TOLERANCE_DEGREES,
   getRotationSnapAngles,
 } from "@/features/canvas/utils/rotation-snaps";
+import { preloadRenderableImages } from "@/features/images/hooks/use-renderable-image-url";
 import { isLikelyFilePath } from "@/features/project/persistence/project-io";
 import { TextStylePanel } from "@/features/text/components/TextStylePanel";
 import { useAppStore } from "@/state/app-store";
@@ -54,6 +69,7 @@ interface AssetLayerItemProps {
   asset: AssetItem;
   isSelected: boolean;
   isPanMode: boolean;
+  renderMode: CanvasRenderMode;
   onSelect: (assetId: string, additive: boolean) => void;
   onEditText: (assetId: string) => void;
   onContextMenu: (assetId: string, clientPosition: Point, isSelected: boolean, additive: boolean) => void;
@@ -100,6 +116,10 @@ function getAssetThumbnailSource(asset: AssetItem) {
   }
 
   return asset.thumbnailPath ?? (isLikelyFilePath(asset.imagePath) ? null : asset.imagePath);
+}
+
+function areStringArraysEqual(left: readonly string[], right: readonly string[]) {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 function getCoverCrop(image: HTMLImageElement, width: number, height: number) {
@@ -422,6 +442,7 @@ function AssetLayerItem({
   asset,
   isSelected,
   isPanMode,
+  renderMode,
   onSelect,
   onEditText,
   onContextMenu,
@@ -433,7 +454,11 @@ function AssetLayerItem({
   isEditing,
 }: AssetLayerItemProps) {
   const isText = isTextAsset(asset);
-  const image = useHtmlImage(isText ? null : asset.imagePath);
+  const shouldUsePreviewImage = shouldUseCanvasPreviewImage(asset, renderMode);
+  const fullImage = useHtmlImage(isText || shouldUsePreviewImage ? null : asset.imagePath);
+  const previewImage = useHtmlImage(!isText && asset.thumbnailPath ? asset.thumbnailPath : null);
+  const image = shouldUsePreviewImage ? previewImage ?? fullImage : fullImage ?? previewImage;
+  const isPreviewImageVisible = Boolean(previewImage && image === previewImage);
   const width = asset.width * asset.scale;
   const height = asset.height * asset.scale;
   const suppressClickAfterDragRef = useRef(false);
@@ -564,8 +589,9 @@ function AssetLayerItem({
         fill={isText ? "rgba(255, 255, 255, 0.001)" : "rgba(255, 255, 255, 0.01)"}
         stroke={isText ? "rgba(255,255,255,0)" : isSelected ? "#7f96ff" : "rgba(255,255,255,0.06)"}
         strokeWidth={isText ? 0 : isSelected ? 2 : 1}
-        shadowBlur={isText ? 0 : isSelected ? 12 : 4}
+        shadowBlur={isText || renderMode === "interactive" ? 0 : isSelected ? 12 : 4}
         shadowColor={isSelected ? "rgba(127, 150, 255, 0.35)" : "rgba(0,0,0,0.2)"}
+        perfectDrawEnabled={renderMode === "settled"}
       />
       {isText ? (
         <Text
@@ -582,6 +608,7 @@ function AssetLayerItem({
           lineHeight={asset.text.lineHeight}
           wrap="word"
           opacity={isEditing ? 0.22 : 1}
+          perfectDrawEnabled={renderMode === "settled"}
         />
       ) : image ? (
         <KonvaImage
@@ -591,8 +618,10 @@ function AssetLayerItem({
           width={width}
           height={height}
           cornerRadius={0}
-          shadowBlur={8}
+          shadowBlur={renderMode === "interactive" ? 0 : 8}
           shadowColor="rgba(0, 0, 0, 0.2)"
+          opacity={isPreviewImageVisible ? 0.92 : 1}
+          perfectDrawEnabled={renderMode === "settled"}
         />
       ) : (
         <Rect
@@ -602,6 +631,7 @@ function AssetLayerItem({
           height={height}
           cornerRadius={0}
           fill="rgba(255, 255, 255, 0.1)"
+          perfectDrawEnabled={renderMode === "settled"}
         />
       )}
     </Group>
@@ -674,8 +704,11 @@ function TextEditOverlay({
 export function CanvasStage() {
   const [panelElement, setPanelElement] = useState<HTMLDivElement | null>(null);
   const [isPanning, setIsPanning] = useState(false);
+  const [isCameraRenderSettling, setIsCameraRenderSettling] = useState(false);
+  const [isInteractionRenderSettling, setIsInteractionRenderSettling] = useState(false);
   const [isRotationSnapModifierPressed, setIsRotationSnapModifierPressed] = useState(false);
   const [generationAnimationTick, setGenerationAnimationTick] = useState(0);
+  const [stableRenderAssetIds, setStableRenderAssetIds] = useState<string[]>([]);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [marqueeSession, setMarqueeSession] = useState<{
     additive: boolean;
@@ -688,6 +721,9 @@ export function CanvasStage() {
   const assetNodeRefs = useRef<Record<string, Konva.Group | null>>({});
   const dragSessionRef = useRef<DragSession | null>(null);
   const dragPreviewPositionsRef = useRef<Record<string, Point> | null>(null);
+  const cameraRenderSettleTimerRef = useRef<number | null>(null);
+  const interactionRenderSettleTimerRef = useRef<number | null>(null);
+  const hasTrackedCameraRenderRef = useRef(false);
   const selectedAssetIdsRef = useRef<string[]>([]);
   const assetMapRef = useRef<Record<string, AssetItem>>({});
   const panSessionRef = useRef<{
@@ -804,6 +840,31 @@ export function CanvasStage() {
     }
   }, [deleteSelection, pushToast, writeSelectedAssetsToClipboard]);
 
+  const setRenderInteractive = useCallback((active: boolean) => {
+    if (interactionRenderSettleTimerRef.current !== null) {
+      window.clearTimeout(interactionRenderSettleTimerRef.current);
+      interactionRenderSettleTimerRef.current = null;
+    }
+
+    if (active) {
+      setIsInteractionRenderSettling(true);
+      return;
+    }
+
+    interactionRenderSettleTimerRef.current = window.setTimeout(() => {
+      setIsInteractionRenderSettling(false);
+      interactionRenderSettleTimerRef.current = null;
+    }, CANVAS_RENDER_SETTLE_MS);
+  }, []);
+
+  const setCanvasInteractionPreviewActive = useCallback(
+    (active: boolean) => {
+      setCanvasInteractionActive(active);
+      setRenderInteractive(active);
+    },
+    [setCanvasInteractionActive, setRenderInteractive],
+  );
+
   useCanvasShortcuts({
     frameAll,
     frameSelection,
@@ -853,9 +914,85 @@ export function CanvasStage() {
     () => Object.fromEntries(assets.map((asset) => [asset.id, asset])),
     [assets],
   );
-  const visibleAssetNodeKey = useMemo(
+  const renderMode: CanvasRenderMode = getCanvasRenderMode({
+    isCameraRenderSettling,
+    isInteractionRenderSettling,
+    isPanning,
+    hasMarqueeSession: Boolean(marqueeSession),
+  });
+  const renderViewport = useMemo(
+    () => getCameraOverscanViewport(camera, CANVAS_RENDER_OVERSCAN_SCREENS),
+    [camera.x, camera.y, camera.zoom, camera.viewportHeight, camera.viewportWidth],
+  );
+  const preloadViewport = useMemo(
+    () => getCameraOverscanViewport(camera, CANVAS_PRELOAD_OVERSCAN_SCREENS),
+    [camera.x, camera.y, camera.zoom, camera.viewportHeight, camera.viewportWidth],
+  );
+  const retainViewport = useMemo(
+    () => getCameraOverscanViewport(camera, CANVAS_RETAIN_OVERSCAN_SCREENS),
+    [camera.x, camera.y, camera.zoom, camera.viewportHeight, camera.viewportWidth],
+  );
+  const targetRenderAssetIds = useMemo(
     () =>
       assets
+        .filter(
+          (asset) =>
+            selectedAssetSet.has(asset.id) ||
+            editingTextAssetId === asset.id ||
+            assetIntersectsViewport(asset, renderViewport),
+        )
+        .map((asset) => asset.id),
+    [assets, editingTextAssetId, renderViewport, selectedAssetSet],
+  );
+  const retainedRenderAssetIds = useMemo(
+    () =>
+      assets
+        .filter(
+          (asset) =>
+            selectedAssetSet.has(asset.id) ||
+            editingTextAssetId === asset.id ||
+            assetIntersectsViewport(asset, retainViewport),
+        )
+        .map((asset) => asset.id),
+    [assets, editingTextAssetId, retainViewport, selectedAssetSet],
+  );
+  const targetRenderAssetIdKey = targetRenderAssetIds.join("|");
+  const retainedRenderAssetIdKey = retainedRenderAssetIds.join("|");
+  const renderAssetIdSet = useMemo(() => {
+    const assetIds = new Set(stableRenderAssetIds);
+
+    for (const assetId of targetRenderAssetIds) {
+      assetIds.add(assetId);
+    }
+
+    return assetIds;
+  }, [stableRenderAssetIds, targetRenderAssetIds]);
+  const renderAssets = useMemo(
+    () => assets.filter((asset) => renderAssetIdSet.has(asset.id)),
+    [assets, renderAssetIdSet],
+  );
+  const preloadSources = useMemo(() => {
+    const sources = new Set<string>();
+
+    for (const asset of assets) {
+      if (!isImageAsset(asset) || !assetIntersectsViewport(asset, preloadViewport)) {
+        continue;
+      }
+
+      if (asset.thumbnailPath) {
+        sources.add(asset.thumbnailPath);
+      }
+
+      if (renderMode === "settled" || assetIntersectsViewport(asset, renderViewport)) {
+        sources.add(asset.imagePath);
+      }
+    }
+
+    return [...sources];
+  }, [assets, preloadViewport, renderMode, renderViewport]);
+  const visibleAssetNodeKey = useMemo(
+    () =>
+      renderAssets
         .map((asset) => {
           const textSignature = isTextAsset(asset)
             ? `${asset.text.value}:${asset.text.fontFamily}:${asset.text.fontSize}:${asset.text.fontStyle}:${asset.text.align}:${asset.text.lineHeight}`
@@ -872,7 +1009,7 @@ export function CanvasStage() {
           ].join(":");
         })
         .join("|"),
-    [assets],
+    [renderAssets],
   );
   const zoomLabel = `${Math.round(camera.zoom * 100)}%`;
   const hasLockedSelection = selectedAssetIds.some((assetId) => assetMap[assetId]?.locked);
@@ -917,7 +1054,65 @@ export function CanvasStage() {
   }, [setViewportSize, size.height, size.width]);
 
   useEffect(() => {
-    if (activeGenerationJobs.length === 0) {
+    setStableRenderAssetIds((currentIds) => {
+      const nextIds = getStableRenderAssetIds({
+        currentIds,
+        targetIds: targetRenderAssetIds,
+        retainedIds: retainedRenderAssetIds,
+        pruneToTarget: renderMode === "settled",
+      });
+
+      return areStringArraysEqual(currentIds, nextIds) ? currentIds : nextIds;
+    });
+  }, [renderMode, retainedRenderAssetIdKey, targetRenderAssetIdKey, retainedRenderAssetIds, targetRenderAssetIds]);
+
+  useEffect(() => {
+    if (!hasTrackedCameraRenderRef.current) {
+      hasTrackedCameraRenderRef.current = true;
+      return;
+    }
+
+    setIsCameraRenderSettling(true);
+
+    if (cameraRenderSettleTimerRef.current !== null) {
+      window.clearTimeout(cameraRenderSettleTimerRef.current);
+    }
+
+    cameraRenderSettleTimerRef.current = window.setTimeout(() => {
+      setIsCameraRenderSettling(false);
+      cameraRenderSettleTimerRef.current = null;
+    }, CANVAS_RENDER_SETTLE_MS);
+
+    return () => {
+      if (cameraRenderSettleTimerRef.current !== null) {
+        window.clearTimeout(cameraRenderSettleTimerRef.current);
+        cameraRenderSettleTimerRef.current = null;
+      }
+    };
+  }, [camera.x, camera.y, camera.zoom]);
+
+  useEffect(() => {
+    return () => {
+      if (interactionRenderSettleTimerRef.current !== null) {
+        window.clearTimeout(interactionRenderSettleTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (preloadSources.length === 0) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      void preloadRenderableImages(preloadSources);
+    }, renderMode === "interactive" ? 120 : 40);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [preloadSources, renderMode]);
+
+  useEffect(() => {
+    if (activeGenerationJobs.length === 0 || renderMode === "interactive") {
       setGenerationAnimationTick(0);
       return;
     }
@@ -927,7 +1122,7 @@ export function CanvasStage() {
     }, 180);
 
     return () => window.clearInterval(intervalId);
-  }, [activeGenerationJobs.length]);
+  }, [activeGenerationJobs.length, renderMode]);
 
   useEffect(() => {
     const updateRotationSnapModifier = (pressed: boolean) => {
@@ -1073,7 +1268,7 @@ export function CanvasStage() {
   };
 
   const beginAssetDrag = (assetId: string, position: Point) => {
-    setCanvasInteractionActive(true);
+    setCanvasInteractionPreviewActive(true);
     const currentSelectedIds = selectedAssetIdsRef.current;
     const currentAssetMap = assetMapRef.current;
     const isCurrentlySelected = currentSelectedIds.includes(assetId);
@@ -1146,7 +1341,7 @@ export function CanvasStage() {
     if (!dragSession || dragSession.assetId !== assetId) {
       setAssetPosition(assetId, position);
       dragPreviewPositionsRef.current = null;
-      setCanvasInteractionActive(false);
+      setCanvasInteractionPreviewActive(false);
       return;
     }
 
@@ -1177,7 +1372,7 @@ export function CanvasStage() {
     setAssetPositions(updates);
     dragSessionRef.current = null;
     dragPreviewPositionsRef.current = null;
-    setCanvasInteractionActive(false);
+    setCanvasInteractionPreviewActive(false);
   };
 
   const finalizeMarquee = (pointer: Point | null) => {
@@ -1287,7 +1482,7 @@ export function CanvasStage() {
 
               if (shouldPan) {
                 event.evt.preventDefault();
-                setCanvasInteractionActive(true);
+                setCanvasInteractionPreviewActive(true);
                 panSessionRef.current = {
                   originPointer: pointer,
                   originCamera: {
@@ -1301,7 +1496,7 @@ export function CanvasStage() {
 
               if (clickedEmptyCanvas && event.evt.button === 0) {
                 const originWorld = screenToWorld(camera, pointer);
-                setCanvasInteractionActive(true);
+                setCanvasInteractionPreviewActive(true);
                 setMarqueeSession({
                   additive: isAdditiveSelectionModifier(event.evt),
                   originWorld,
@@ -1340,12 +1535,12 @@ export function CanvasStage() {
               panSessionRef.current = null;
               setIsPanning(false);
               finalizeMarquee(pointer);
-              setCanvasInteractionActive(false);
+              setCanvasInteractionPreviewActive(false);
             }}
             onMouseLeave={() => {
               panSessionRef.current = null;
               setIsPanning(false);
-              setCanvasInteractionActive(false);
+              setCanvasInteractionPreviewActive(false);
             }}
             onContextMenu={(event) => {
               event.evt.preventDefault();
@@ -1372,7 +1567,7 @@ export function CanvasStage() {
             </Layer>
 
             <Layer>
-              {assets.map((asset) => {
+              {renderAssets.map((asset) => {
                 const previewPosition = dragPreviewPositionsRef.current?.[asset.id];
                 const displayAsset = previewPosition
                   ? {
@@ -1389,9 +1584,10 @@ export function CanvasStage() {
                     isSelected={selectedAssetSet.has(asset.id)}
                     isEditing={editingTextAssetId === asset.id}
                     isPanMode={isPanInteractionMode}
+                    renderMode={renderMode}
                     onContextMenu={handleAssetContextMenu}
                     onEditText={beginTextEditing}
-                    onInteractionActiveChange={setCanvasInteractionActive}
+                    onInteractionActiveChange={setCanvasInteractionPreviewActive}
                     onSelect={(assetId, additive) => selectAsset(assetId, { additive })}
                     onBeginDrag={beginAssetDrag}
                     onDrag={updateAssetDrag}
@@ -1415,10 +1611,10 @@ export function CanvasStage() {
                 borderStroke="#7f96ff"
                 borderStrokeWidth={1.5}
                 resizeEnabled={!hasLockedSelection}
-                onTransformStart={() => setCanvasInteractionActive(true)}
+                onTransformStart={() => setCanvasInteractionPreviewActive(true)}
                 onTransformEnd={() => {
                   commitTransformerState();
-                  setCanvasInteractionActive(false);
+                  setCanvasInteractionPreviewActive(false);
                 }}
                 boundBoxFunc={(oldBox, newBox) => {
                   if (Math.abs(newBox.width) < 32 || Math.abs(newBox.height) < 32) {
@@ -1441,7 +1637,7 @@ export function CanvasStage() {
                   animationTick={generationAnimationTick}
                   isPanMode={isPanInteractionMode}
                   onDrag={setGenerationJobCanvasPlacement}
-                  onInteractionActiveChange={setCanvasInteractionActive}
+                  onInteractionActiveChange={setCanvasInteractionPreviewActive}
                 />
               ))}
             </Layer>

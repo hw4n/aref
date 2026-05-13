@@ -1,28 +1,40 @@
 import { useEffect, useState } from "react";
 
-import { useRenderableImageUrl } from "@/features/images/hooks/use-renderable-image-url";
+import {
+  getCachedRenderableImageElement,
+  loadRenderableImageElement,
+} from "@/features/images/hooks/use-renderable-image-url";
 
 export function useHtmlImage(src: string | null) {
-  const [image, setImage] = useState<HTMLImageElement | null>(null);
-  const renderableSrc = useRenderableImageUrl(src ?? "");
+  const [image, setImage] = useState<HTMLImageElement | null>(() =>
+    src ? getCachedRenderableImageElement(src) : null,
+  );
 
   useEffect(() => {
+    let cancelled = false;
+
     if (!src) {
       setImage(null);
       return;
     }
 
-    const nextImage = new window.Image();
-    nextImage.crossOrigin = "anonymous";
-    nextImage.onload = () => setImage(nextImage);
+    const cached = getCachedRenderableImageElement(src);
 
-    setImage(null);
-    nextImage.src = renderableSrc;
+    if (cached) {
+      setImage(cached);
+      return;
+    }
+
+    void loadRenderableImageElement(src).then((nextImage) => {
+      if (!cancelled) {
+        setImage(nextImage);
+      }
+    });
 
     return () => {
-      nextImage.onload = null;
+      cancelled = true;
     };
-  }, [renderableSrc, src]);
+  }, [src]);
 
   return image;
 }
