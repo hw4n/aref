@@ -36,6 +36,11 @@ export interface GenerationRequest {
   settings: GenerationSettings;
 }
 
+export interface GenerationBulkGrid {
+  columns: number;
+  rows: number;
+}
+
 export interface GenerationJob {
   id: ID;
   request: GenerationRequest;

@@ -30,6 +30,10 @@ describe("generation draft storage", () => {
           moderation: "auto",
           compressReferenceImages: false,
         },
+        bulkGrid: {
+          columns: 3,
+          rows: 2,
+        },
         pinnedAssetIds: ["asset-1"],
         isExplicitlyOpened: true,
       },
@@ -44,6 +48,10 @@ describe("generation draft storage", () => {
       negativePrompt: "blur",
       provider: "openai",
       model: "gpt-image-2",
+      bulkGrid: {
+        columns: 3,
+        rows: 2,
+      },
       settings: {
         imageCount: 2,
         size: "2048x1152",
@@ -68,6 +76,20 @@ describe("generation draft storage", () => {
       size: "2048x1152",
       quality: "medium",
       compressReferenceImages: true,
+    });
+  });
+
+  it("normalizes invalid bulk grid values", () => {
+    expect(
+      normalizeGenerationDraft({
+        bulkGrid: {
+          columns: 12,
+          rows: -2,
+        },
+      }).bulkGrid,
+    ).toEqual({
+      columns: 4,
+      rows: 1,
     });
   });
 });

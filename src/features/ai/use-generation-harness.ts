@@ -1,7 +1,13 @@
 import { useCallback, useEffect } from "react";
 
 import { isImageAsset } from "@/domain/assets/types";
-import type { GenerationRequest } from "@/domain/jobs/types";
+import {
+  computeBulkGenerationPlacements,
+  findAvailableGenerationPlacement,
+  getViewportCenter,
+} from "@/domain/jobs/generation-layout";
+import type { GenerationBulkGrid, GenerationRequest } from "@/domain/jobs/types";
+import type { Point } from "@/domain/shared/types";
 import { getGenerationProvider, listGenerationProviders } from "@/services/providers/provider-registry";
 import {
   getGenerationConcurrencyPlan,
@@ -13,6 +19,15 @@ const activeGenerationControllers = new Map<string, AbortController>();
 
 interface UseGenerationHarnessOptions {
   onGenerationCompleted?: () => Promise<unknown> | unknown;
+}
+
+interface ExecuteGenerationOptions {
+  retryJobId?: string;
+  canvasPlacement?: Point;
+}
+
+interface SubmitGenerationOptions {
+  bulkGrid?: GenerationBulkGrid;
 }
 
 function isAbortError(error: unknown) {
@@ -48,7 +63,7 @@ export function useGenerationHarness(options: UseGenerationHarnessOptions = {}) 
   }, []);
 
   const executeGeneration = useCallback(
-    async (request: GenerationRequest, retryJobId?: string) => {
+    async (request: GenerationRequest, executeOptions: ExecuteGenerationOptions = {}) => {
       const provider = getGenerationProvider(request.provider);
 
       if (!provider) {
@@ -87,7 +102,10 @@ export function useGenerationHarness(options: UseGenerationHarnessOptions = {}) 
         selectedAssetIds: imageReferenceIds,
       };
 
-      const jobId = queueGenerationJob(imageRequest, retryJobId);
+      const jobId = queueGenerationJob(imageRequest, {
+        jobId: executeOptions.retryJobId,
+        canvasPlacement: executeOptions.canvasPlacement,
+      });
       appendDiagnosticLog({
         level: "info",
         scope: "generation",
@@ -196,6 +214,7 @@ export function useGenerationHarness(options: UseGenerationHarnessOptions = {}) 
       cancelGenerationJobState,
       completeGenerationJob,
       failGenerationJob,
+      generationConcurrencyMode,
       project.assets,
       pushToast,
       queueGenerationJob,
@@ -205,7 +224,7 @@ export function useGenerationHarness(options: UseGenerationHarnessOptions = {}) 
   );
 
   const submitGeneration = useCallback(
-    async (request: GenerationRequest) => {
+    async (request: GenerationRequest, submitOptions: SubmitGenerationOptions = {}) => {
       if (request.prompt.trim().length === 0) {
         appendDiagnosticLog({
           level: "warning",
@@ -221,15 +240,52 @@ export function useGenerationHarness(options: UseGenerationHarnessOptions = {}) 
         return null;
       }
 
-      return executeGeneration(
-        {
-          ...request,
-          prompt: request.prompt.trim(),
-          negativePrompt: request.negativePrompt?.trim() || undefined,
-        },
+      const cleanRequest = {
+        ...request,
+        prompt: request.prompt.trim(),
+        negativePrompt: request.negativePrompt?.trim() || undefined,
+      };
+      const bulkGrid = submitOptions.bulkGrid ?? { columns: 1, rows: 1 };
+      const bulkColumns = Math.max(1, Math.min(4, Math.round(bulkGrid.columns)));
+      const bulkRows = Math.max(1, Math.min(4, Math.round(bulkGrid.rows)));
+      const bulkJobCount = bulkColumns * bulkRows;
+
+      if (bulkJobCount <= 1) {
+        return executeGeneration(cleanRequest);
+      }
+
+      const activeJobs = Object.values(project.jobs).filter(
+        (job) => job.status === "queued" || job.status === "running",
       );
+      const origin = findAvailableGenerationPlacement(
+        cleanRequest,
+        activeJobs,
+        getViewportCenter(project.camera),
+      );
+      const placements = computeBulkGenerationPlacements(
+        cleanRequest,
+        bulkColumns,
+        bulkRows,
+        origin,
+      );
+
+      appendDiagnosticLog({
+        level: "info",
+        scope: "generation",
+        title: "Bulk generation queued",
+        message: `${bulkJobCount} independent jobs queued in a ${bulkColumns} x ${bulkRows} grid.`,
+        details: `Each job requests ${cleanRequest.settings.imageCount} output${cleanRequest.settings.imageCount === 1 ? "" : "s"}.`,
+      });
+
+      void Promise.all(
+        placements.map((canvasPlacement) =>
+          executeGeneration(cleanRequest, { canvasPlacement }),
+        ),
+      );
+
+      return null;
     },
-    [appendDiagnosticLog, executeGeneration, pushToast],
+    [appendDiagnosticLog, executeGeneration, project.camera, project.jobs, pushToast],
   );
 
   const cancelGeneration = useCallback(

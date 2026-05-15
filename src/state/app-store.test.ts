@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
+import { getGenerationRequestPlaceholderBounds } from "@/domain/jobs/generation-layout";
 import type { GenerationRequest } from "@/domain/jobs/types";
 import { createSampleProject } from "@/domain/project/sample-project";
+import { rectsIntersect } from "@/domain/shared/geometry";
 
 import { createAppStore } from "./app-store";
 
@@ -427,6 +429,24 @@ describe("app store", () => {
       x: 480,
       y: 270,
     });
+  });
+
+  it("auto-places consecutive generation placeholders without overlap", () => {
+    const store = createAppStore();
+    store.getState().setViewportSize(1440, 900);
+
+    const firstJobId = store.getState().queueGenerationJob(sampleGenerationRequest);
+    const secondJobId = store.getState().queueGenerationJob(sampleGenerationRequest);
+    const firstJob = store.getState().project.jobs[firstJobId]!;
+    const secondJob = store.getState().project.jobs[secondJobId]!;
+
+    expect(secondJob.canvasPlacement).not.toEqual(firstJob.canvasPlacement);
+    expect(
+      rectsIntersect(
+        getGenerationRequestPlaceholderBounds(firstJob.request, firstJob.canvasPlacement),
+        getGenerationRequestPlaceholderBounds(secondJob.request, secondJob.canvasPlacement),
+      ),
+    ).toBe(false);
   });
 
   it("allows moving an in-progress generation placeholder without affecting the job state machine", () => {

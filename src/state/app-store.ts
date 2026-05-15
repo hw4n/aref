@@ -31,7 +31,10 @@ import {
   markGenerationJobRunning,
   markGenerationJobSucceeded,
 } from "@/domain/jobs/job-state-machine";
-import { getViewportCenter } from "@/domain/jobs/generation-layout";
+import {
+  findAvailableGenerationPlacement,
+  getViewportCenter,
+} from "@/domain/jobs/generation-layout";
 import {
   createGroupFromSelection,
   getSelectedGroupIds,
@@ -62,6 +65,11 @@ import { getDefaultAppUiPreferences } from "@/features/settings/preferences-stor
 
 type SelectionOptions = {
   additive?: boolean;
+};
+
+type QueueGenerationJobOptions = {
+  jobId?: string;
+  canvasPlacement?: Point;
 };
 
 export interface AssetTransformCommit {
@@ -119,8 +127,9 @@ export interface AppStoreState {
   commitAssetTransforms: (updates: AssetTransformCommit[]) => void;
   hydrateUiPreferences: (preferences: Partial<AppUiPreferences>) => void;
   setGenerationDraft: (
-    draft: Partial<Omit<GenerationSheetDraft, "settings">> & {
+    draft: Partial<Omit<GenerationSheetDraft, "settings" | "bulkGrid">> & {
       settings?: Partial<GenerationSheetDraft["settings"]>;
+      bulkGrid?: Partial<GenerationSheetDraft["bulkGrid"]>;
     },
   ) => void;
   toggleLeftSidebar: () => void;
@@ -153,7 +162,7 @@ export interface AppStoreState {
   ungroupSelection: () => void;
   duplicateSelection: () => void;
   deleteSelection: () => void;
-  queueGenerationJob: (request: GenerationRequest, jobId?: string) => string;
+  queueGenerationJob: (request: GenerationRequest, options?: string | QueueGenerationJobOptions) => string;
   setGenerationJobCanvasPlacement: (jobId: string, position: Point) => void;
   runGenerationJob: (jobId: string) => void;
   completeGenerationJob: (jobId: string, result: GenerationProviderResult) => string[];
@@ -238,6 +247,10 @@ function createDefaultGenerationDraft(): GenerationSheetDraft {
       moderation: "low",
       compressReferenceImages: true,
     },
+    bulkGrid: {
+      columns: 1,
+      rows: 1,
+    },
     pinnedAssetIds: null,
     isExplicitlyOpened: false,
   };
@@ -253,6 +266,10 @@ function resetGenerationSheetContext(generationDraft: GenerationSheetDraft): Gen
     pinnedAssetIds: null,
     isExplicitlyOpened: false,
   };
+}
+
+function normalizeQueueGenerationJobOptions(options?: string | QueueGenerationJobOptions): QueueGenerationJobOptions {
+  return typeof options === "string" ? { jobId: options } : options ?? {};
 }
 
 function applyHiddenMap(
@@ -948,6 +965,12 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
                 ...draft.settings,
               }
             : state.generationDraft.settings,
+          bulkGrid: draft.bulkGrid
+            ? {
+                ...state.generationDraft.bulkGrid,
+                ...draft.bulkGrid,
+              }
+            : state.generationDraft.bulkGrid,
         },
       }));
     },
@@ -1483,12 +1506,22 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
         });
       });
     },
-    queueGenerationJob: (request, jobId) => {
-      const nextJobId = jobId ?? crypto.randomUUID();
+    queueGenerationJob: (request, options) => {
+      const queueOptions = normalizeQueueGenerationJobOptions(options);
+      const nextJobId = queueOptions.jobId ?? crypto.randomUUID();
       const timestamp = new Date().toISOString();
       const currentState = get();
       const existingJob = currentState.project.jobs[nextJobId];
-      const canvasPlacement = existingJob?.canvasPlacement ?? getViewportCenter(currentState.project.camera);
+      const activeJobs = Object.values(currentState.project.jobs).filter(
+        (job) =>
+          job.id !== nextJobId
+          && (job.status === "queued" || job.status === "running"),
+      );
+      const viewportCenter = getViewportCenter(currentState.project.camera);
+      const canvasPlacement =
+        queueOptions.canvasPlacement
+        ?? existingJob?.canvasPlacement
+        ?? findAvailableGenerationPlacement(request, activeJobs, viewportCenter);
 
       set((state) => ({
         project: bumpProject({

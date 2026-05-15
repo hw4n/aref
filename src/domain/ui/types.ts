@@ -2,6 +2,7 @@ import type {
   GenerationImageSize,
   GenerationImageQuality,
   GenerationModeration,
+  GenerationBulkGrid,
 } from "@/domain/jobs/types";
 import type {
   GenerationConcurrencyMode,
@@ -22,6 +23,7 @@ export interface GenerationSheetDraft {
     moderation: GenerationModeration;
     compressReferenceImages?: boolean;
   };
+  bulkGrid: GenerationBulkGrid;
   pinnedAssetIds: ID[] | null;
   isExplicitlyOpened: boolean;
 }

@@ -1,3 +1,5 @@
+import { useState } from "react";
+
 import {
   CancelIcon,
   EyeIcon,
@@ -20,6 +22,7 @@ import type {
   GenerationImageSize,
   GenerationImageQuality,
   GenerationModeration,
+  GenerationBulkGrid,
   GenerationRequest,
 } from "@/domain/jobs/types";
 import type { GenerationProviderAdapter } from "@/domain/providers/types";
@@ -40,6 +43,7 @@ const SIZE_OPTIONS: GenerationImageSize[] = [
 const QUALITY_OPTIONS: GenerationImageQuality[] = ["low", "medium", "high", "auto"];
 const MODERATION_OPTIONS: GenerationModeration[] = ["low", "auto"];
 const COUNT_OPTIONS = [1, 2, 4];
+const BULK_GRID_LIMIT = 4;
 
 function getSizeLabel(size: GenerationImageSize) {
   if (size === "auto") {
@@ -75,7 +79,10 @@ function getSizeLabel(size: GenerationImageSize) {
 
 interface ContextualGenerationSheetProps {
   activeProvider: GenerationProviderAdapter | null;
-  onSubmitGeneration: (request: GenerationRequest) => void | Promise<string | null>;
+  onSubmitGeneration: (
+    request: GenerationRequest,
+    options?: { bulkGrid?: GenerationBulkGrid },
+  ) => void | Promise<string | null>;
 }
 
 export function ContextualGenerationSheet({
@@ -83,6 +90,7 @@ export function ContextualGenerationSheet({
   onSubmitGeneration,
 }: ContextualGenerationSheetProps) {
   const selectedAssets = useAppStore(selectSelectedAssets);
+  const [hoveredBulkGrid, setHoveredBulkGrid] = useState<GenerationBulkGrid | null>(null);
   const selectedGroups = useAppStore(selectSelectedGroups);
   const generationDraft = useAppStore((state) => state.generationDraft);
   const isPinnedReferenceSet = generationDraft.pinnedAssetIds !== null;
@@ -114,6 +122,8 @@ export function ContextualGenerationSheet({
   const canSubmitGeneration = generationDraft.prompt.trim().length > 0 && Boolean(activeProvider);
   const isOAuthProvider = activeProvider?.id === "ima2-sidecar";
   const compressReferenceImages = generationDraft.settings.compressReferenceImages ?? true;
+  const activeBulkGrid = hoveredBulkGrid ?? generationDraft.bulkGrid;
+  const bulkJobCount = generationDraft.bulkGrid.columns * generationDraft.bulkGrid.rows;
 
   const handleRemoveReference = (assetId: string) => {
     const sourceIds = generationDraft.pinnedAssetIds ?? referenceAssetIds;
@@ -140,7 +150,7 @@ export function ContextualGenerationSheet({
       settings: generationDraft.settings,
     };
 
-    void Promise.resolve(onSubmitGeneration(request)).then(() => {
+    void Promise.resolve(onSubmitGeneration(request, { bulkGrid: generationDraft.bulkGrid })).then(() => {
       setGenerationDraft({
         isExplicitlyOpened: false,
       });
@@ -390,6 +400,46 @@ export function ContextualGenerationSheet({
                 ))}
               </select>
             </label>
+          </div>
+
+          <div className="generation-sheet__bulk-grid-control">
+            <div className="generation-sheet__bulk-grid-header">
+              <span>Bulk Grid</span>
+              <strong>{`${generationDraft.bulkGrid.columns} x ${generationDraft.bulkGrid.rows} jobs`}</strong>
+            </div>
+            <div
+              className="generation-sheet__bulk-grid-picker"
+              onMouseLeave={() => setHoveredBulkGrid(null)}
+            >
+              {Array.from({ length: BULK_GRID_LIMIT * BULK_GRID_LIMIT }, (_unused, index) => {
+                const column = (index % BULK_GRID_LIMIT) + 1;
+                const row = Math.floor(index / BULK_GRID_LIMIT) + 1;
+                const isActive = column <= activeBulkGrid.columns && row <= activeBulkGrid.rows;
+                const isSelected =
+                  column <= generationDraft.bulkGrid.columns
+                  && row <= generationDraft.bulkGrid.rows;
+
+                return (
+                  <button
+                    key={`${column}-${row}`}
+                    aria-label={`${column} by ${row} bulk grid`}
+                    className={[
+                      "generation-sheet__bulk-grid-cell",
+                      isActive ? "generation-sheet__bulk-grid-cell--active" : "",
+                      isSelected ? "generation-sheet__bulk-grid-cell--selected" : "",
+                    ].filter(Boolean).join(" ")}
+                    title={`${column} x ${row}`}
+                    type="button"
+                    onClick={() => setGenerationDraft({ bulkGrid: { columns: column, rows: row } })}
+                    onFocus={() => setHoveredBulkGrid({ columns: column, rows: row })}
+                    onMouseEnter={() => setHoveredBulkGrid({ columns: column, rows: row })}
+                  />
+                );
+              })}
+            </div>
+            <span className="generation-sheet__bulk-grid-meta">
+              {bulkJobCount === 1 ? "Single job" : `${bulkJobCount} queued jobs`}
+            </span>
           </div>
         </div>
 

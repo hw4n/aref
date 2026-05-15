@@ -8,6 +8,7 @@ type StoredGenerationSettings = Partial<GenerationSheetDraft["settings"]> & {
 };
 
 export type StoredGenerationDraft = Partial<Omit<GenerationSheetDraft, "pinnedAssetIds" | "isExplicitlyOpened" | "settings">> & {
+  bulkGrid?: Partial<GenerationSheetDraft["bulkGrid"]>;
   settings?: StoredGenerationSettings;
 };
 
@@ -78,14 +79,25 @@ function normalizeImageCount(value: unknown) {
     : 1;
 }
 
+function normalizeBulkGridAxis(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.max(1, Math.min(4, Math.round(value)))
+    : 1;
+}
+
 export function normalizeGenerationDraft(input: StoredGenerationDraft | null | undefined): StoredGenerationDraft {
   const settings = input?.settings ?? {};
+  const bulkGrid: Partial<GenerationSheetDraft["bulkGrid"]> = input?.bulkGrid ?? {};
 
   return {
     prompt: typeof input?.prompt === "string" ? input.prompt : "",
     negativePrompt: typeof input?.negativePrompt === "string" ? input.negativePrompt : "",
     provider: typeof input?.provider === "string" && input.provider.trim() ? input.provider : "ima2-sidecar",
     model: typeof input?.model === "string" && input.model.trim() ? input.model : "gpt-5.5",
+    bulkGrid: {
+      columns: normalizeBulkGridAxis(bulkGrid.columns),
+      rows: normalizeBulkGridAxis(bulkGrid.rows),
+    },
     settings: {
       imageCount: normalizeImageCount(settings.imageCount),
       size: normalizeSize(settings.size, settings.aspectRatio),
@@ -102,6 +114,7 @@ export function toStoredGenerationDraft(draft: GenerationSheetDraft): StoredGene
     negativePrompt: draft.negativePrompt,
     provider: draft.provider,
     model: draft.model,
+    bulkGrid: draft.bulkGrid,
     settings: draft.settings,
   });
 }

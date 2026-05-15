@@ -1,11 +1,14 @@
 import { screenToWorld } from "@/domain/camera/camera-math";
 import type { CameraState } from "@/domain/camera/types";
-import type { Point } from "@/domain/shared/types";
+import { rectsIntersect } from "@/domain/shared/geometry";
+import type { Point, Rect } from "@/domain/shared/types";
 
-import type { GenerationImageSize } from "./types";
+import type { GenerationImageSize, GenerationJob, GenerationRequest } from "./types";
 
 const GENERATED_TARGET_MAX_DIMENSION = 360;
 const GENERATED_SPACING = 40;
+const GENERATION_PLACEHOLDER_PADDING = 10;
+const GENERATION_JOB_GRID_GAP = 56;
 
 export function computeGeneratedScale(width: number, height: number) {
   const maxDimension = Math.max(width, height, 1);
@@ -111,4 +114,121 @@ export function computeGenerationCanvasLayout(
         + rowHeights[row]! / 2,
     };
   });
+}
+
+function rectFromFrame(center: Point, frame: { width: number; height: number }): Rect {
+  return {
+    x: center.x - frame.width / 2 - GENERATION_PLACEHOLDER_PADDING,
+    y: center.y - frame.height / 2 - GENERATION_PLACEHOLDER_PADDING,
+    width: frame.width + GENERATION_PLACEHOLDER_PADDING * 2,
+    height: frame.height + GENERATION_PLACEHOLDER_PADDING * 2,
+  };
+}
+
+function unionRects(rects: Rect[]): Rect | null {
+  if (rects.length === 0) {
+    return null;
+  }
+
+  const minX = Math.min(...rects.map((rect) => rect.x));
+  const minY = Math.min(...rects.map((rect) => rect.y));
+  const maxX = Math.max(...rects.map((rect) => rect.x + rect.width));
+  const maxY = Math.max(...rects.map((rect) => rect.y + rect.height));
+
+  return {
+    x: minX,
+    y: minY,
+    width: maxX - minX,
+    height: maxY - minY,
+  };
+}
+
+function expandRect(rect: Rect, padding: number): Rect {
+  return {
+    x: rect.x - padding,
+    y: rect.y - padding,
+    width: rect.width + padding * 2,
+    height: rect.height + padding * 2,
+  };
+}
+
+export function getGenerationRequestPlaceholderBounds(
+  request: GenerationRequest,
+  origin: Point,
+): Rect {
+  const displaySize = getGenerationDisplaySizeForSize(request.settings.size);
+  const frames = Array.from({ length: request.settings.imageCount }, () => ({
+    width: displaySize.width,
+    height: displaySize.height,
+  }));
+  const positions = computeGenerationCanvasLayout(frames, origin);
+  const bounds = unionRects(positions.map((position, index) => rectFromFrame(position, frames[index]!)));
+
+  return bounds ?? rectFromFrame(origin, displaySize);
+}
+
+export function computeBulkGenerationPlacements(
+  request: GenerationRequest,
+  columns: number,
+  rows: number,
+  origin: Point,
+): Point[] {
+  const safeColumns = Math.max(1, Math.floor(columns));
+  const safeRows = Math.max(1, Math.floor(rows));
+  const sampleBounds = getGenerationRequestPlaceholderBounds(request, origin);
+  const totalWidth = sampleBounds.width * safeColumns + GENERATION_JOB_GRID_GAP * (safeColumns - 1);
+  const totalHeight = sampleBounds.height * safeRows + GENERATION_JOB_GRID_GAP * (safeRows - 1);
+  const startX = origin.x - totalWidth / 2 + sampleBounds.width / 2;
+  const startY = origin.y - totalHeight / 2 + sampleBounds.height / 2;
+
+  return Array.from({ length: safeColumns * safeRows }, (_unused, index) => {
+    const column = index % safeColumns;
+    const row = Math.floor(index / safeColumns);
+
+    return {
+      x: startX + column * (sampleBounds.width + GENERATION_JOB_GRID_GAP),
+      y: startY + row * (sampleBounds.height + GENERATION_JOB_GRID_GAP),
+    };
+  });
+}
+
+export function findAvailableGenerationPlacement(
+  request: GenerationRequest,
+  existingJobs: GenerationJob[],
+  origin: Point,
+): Point {
+  const sampleBounds = getGenerationRequestPlaceholderBounds(request, origin);
+  const stepX = sampleBounds.width + GENERATION_JOB_GRID_GAP;
+  const stepY = sampleBounds.height + GENERATION_JOB_GRID_GAP;
+  const existingBounds = existingJobs.map((job) =>
+    expandRect(getGenerationRequestPlaceholderBounds(job.request, job.canvasPlacement), GENERATION_JOB_GRID_GAP / 2),
+  );
+
+  for (let radius = 0; radius <= 12; radius += 1) {
+    for (let row = -radius; row <= radius; row += 1) {
+      for (let column = -radius; column <= radius; column += 1) {
+        if (Math.max(Math.abs(row), Math.abs(column)) !== radius) {
+          continue;
+        }
+
+        const placement = {
+          x: origin.x + column * stepX,
+          y: origin.y + row * stepY,
+        };
+        const candidateBounds = expandRect(
+          getGenerationRequestPlaceholderBounds(request, placement),
+          GENERATION_JOB_GRID_GAP / 2,
+        );
+
+        if (!existingBounds.some((bounds) => rectsIntersect(candidateBounds, bounds))) {
+          return placement;
+        }
+      }
+    }
+  }
+
+  return {
+    x: origin.x,
+    y: origin.y + stepY * (existingJobs.length + 1),
+  };
 }
