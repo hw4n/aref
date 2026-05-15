@@ -28,7 +28,7 @@ import {
 } from "@/domain/jobs/generation-layout";
 import type { GenerationJob } from "@/domain/jobs/types";
 import { normalizeRect, rectsIntersect } from "@/domain/shared/geometry";
-import type { Point } from "@/domain/shared/types";
+import type { Point, Rect as CanvasRect } from "@/domain/shared/types";
 import { useCanvasShortcuts } from "@/features/canvas/hooks/use-canvas-shortcuts";
 import { useStageContainerSize } from "@/features/canvas/hooks/use-stage-container-size";
 import {
@@ -82,10 +82,17 @@ interface AssetLayerItemProps {
 }
 
 interface DragSession {
-  assetId: string;
-  selectedIds: string[];
+  itemId: string;
+  kind: "asset" | "generation-job";
+  selectedAssetIds: string[];
+  selectedGenerationJobIds: string[];
   originPosition: Point;
-  startPositions: Record<string, Point>;
+  assetStartPositions: Record<string, Point>;
+  generationJobStartPositions: Record<string, Point>;
+}
+
+interface CanvasStageProps {
+  onCancelGeneration?: (jobId: string) => void;
 }
 
 function isAdditiveSelectionModifier(event: Pick<MouseEvent, "ctrlKey" | "metaKey" | "shiftKey">) {
@@ -116,6 +123,46 @@ function getAssetThumbnailSource(asset: AssetItem) {
   }
 
   return asset.thumbnailPath ?? (isLikelyFilePath(asset.imagePath) ? null : asset.imagePath);
+}
+
+function getRectsBounds(rects: CanvasRect[]): CanvasRect | null {
+  if (rects.length === 0) {
+    return null;
+  }
+
+  const minX = Math.min(...rects.map((rect) => rect.x));
+  const minY = Math.min(...rects.map((rect) => rect.y));
+  const maxX = Math.max(...rects.map((rect) => rect.x + rect.width));
+  const maxY = Math.max(...rects.map((rect) => rect.y + rect.height));
+
+  return {
+    x: minX,
+    y: minY,
+    width: maxX - minX,
+    height: maxY - minY,
+  };
+}
+
+function getGenerationJobBounds(job: GenerationJob): CanvasRect {
+  const displaySize = getGenerationDisplaySizeForSize(job.request.settings.size);
+  const frames = Array.from({ length: job.request.settings.imageCount }, () => ({
+    width: displaySize.width,
+    height: displaySize.height,
+  }));
+  const positions = computeGenerationCanvasLayout(frames, { x: 0, y: 0 });
+  const frameBounds = positions.map((position) => ({
+    x: job.canvasPlacement.x + position.x - displaySize.width / 2 - 10,
+    y: job.canvasPlacement.y + position.y - displaySize.height / 2 - 10,
+    width: displaySize.width + 20,
+    height: displaySize.height + 20,
+  }));
+
+  return getRectsBounds(frameBounds) ?? {
+    x: job.canvasPlacement.x - displaySize.width / 2 - 10,
+    y: job.canvasPlacement.y - displaySize.height / 2 - 10,
+    width: displaySize.width + 20,
+    height: displaySize.height + 20,
+  };
 }
 
 function areStringArraysEqual(left: readonly string[], right: readonly string[]) {
@@ -241,19 +288,33 @@ function GenerationJobPlaceholderItem({
   job,
   referenceAssets,
   animationTick,
+  isSelected,
   isPanMode,
+  onSelect,
+  onBeginDrag,
   onDrag,
+  onEndDrag,
   onInteractionActiveChange,
+  setNodeRef,
 }: {
   job: GenerationJob;
   referenceAssets: AssetItem[];
   animationTick: number;
+  isSelected: boolean;
   isPanMode: boolean;
+  onSelect: (jobId: string, additive: boolean) => void;
+  onBeginDrag: (jobId: string, position: Point) => void;
   onDrag: (jobId: string, position: Point) => void;
+  onEndDrag: (jobId: string, position: Point) => void;
   onInteractionActiveChange: (active: boolean) => void;
+  setNodeRef: (jobId: string, node: Konva.Group | null) => void;
 }) {
   const statusLabel = job.status === "queued" ? "Queued" : "Generating";
-  const statusStroke = job.status === "queued" ? "rgba(255, 199, 92, 0.7)" : "rgba(127, 150, 255, 0.82)";
+  const statusStroke = isSelected
+    ? "#7f96ff"
+    : job.status === "queued"
+      ? "rgba(255, 199, 92, 0.7)"
+      : "rgba(127, 150, 255, 0.82)";
   const displaySize = getGenerationDisplaySizeForSize(job.request.settings.size);
   const frames = Array.from({ length: job.request.settings.imageCount }, () => ({
     width: displaySize.width,
@@ -265,9 +326,11 @@ function GenerationJobPlaceholderItem({
   const overflowReferenceCount = Math.max(0, referenceAssets.length - visibleReferences.length);
   const promptSummary = job.request.prompt.trim() || "Generating image";
   const suppressDragForPanRef = useRef(false);
+  const suppressClickAfterDragRef = useRef(false);
 
   return (
     <Group
+      ref={(node) => setNodeRef(job.id, node)}
       x={job.canvasPlacement.x}
       y={job.canvasPlacement.y}
       draggable={!isPanMode}
@@ -278,6 +341,11 @@ function GenerationJobPlaceholderItem({
         }
 
         event.cancelBubble = true;
+        suppressClickAfterDragRef.current = false;
+        onBeginDrag(job.id, {
+          x: event.target.x(),
+          y: event.target.y(),
+        });
         onInteractionActiveChange(true);
       }}
       onMouseDown={(event) => {
@@ -294,17 +362,34 @@ function GenerationJobPlaceholderItem({
       onTouchStart={(event) => {
         if (!isPanMode) {
           event.cancelBubble = true;
+          onInteractionActiveChange(true);
         }
+      }}
+      onTouchEnd={() => {
+        onInteractionActiveChange(false);
       }}
       onClick={(event) => {
         if (!isPanMode) {
           event.cancelBubble = true;
         }
+
+        const mouseEvent = event.evt as MouseEvent;
+        if (isPanMode || mouseEvent.button !== 0 || suppressClickAfterDragRef.current) {
+          return;
+        }
+
+        onSelect(job.id, isAdditiveSelectionModifier(mouseEvent));
       }}
       onTap={(event) => {
         if (!isPanMode) {
           event.cancelBubble = true;
         }
+
+        if (isPanMode || suppressClickAfterDragRef.current) {
+          return;
+        }
+
+        onSelect(job.id, false);
       }}
       onDragMove={(event) => {
         if (isPanMode || suppressDragForPanRef.current) {
@@ -313,6 +398,7 @@ function GenerationJobPlaceholderItem({
         }
 
         event.cancelBubble = true;
+        suppressClickAfterDragRef.current = true;
         onDrag(job.id, {
           x: event.target.x(),
           y: event.target.y(),
@@ -326,11 +412,14 @@ function GenerationJobPlaceholderItem({
         }
 
         event.cancelBubble = true;
-        onDrag(job.id, {
+        onEndDrag(job.id, {
           x: event.target.x(),
           y: event.target.y(),
         });
         onInteractionActiveChange(false);
+        window.setTimeout(() => {
+          suppressClickAfterDragRef.current = false;
+        }, 0);
       }}
     >
       {positions.map((position, index) => {
@@ -724,7 +813,7 @@ function TextEditOverlay({
   );
 }
 
-export function CanvasStage() {
+export function CanvasStage({ onCancelGeneration }: CanvasStageProps = {}) {
   const [panelElement, setPanelElement] = useState<HTMLDivElement | null>(null);
   const [isPanning, setIsPanning] = useState(false);
   const [isCameraRenderSettling, setIsCameraRenderSettling] = useState(false);
@@ -733,6 +822,7 @@ export function CanvasStage() {
   const [generationAnimationTick, setGenerationAnimationTick] = useState(0);
   const [stableRenderAssetIds, setStableRenderAssetIds] = useState<string[]>([]);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const [selectedGenerationJobIds, setSelectedGenerationJobIds] = useState<string[]>([]);
   const [marqueeSession, setMarqueeSession] = useState<{
     additive: boolean;
     originWorld: Point;
@@ -742,13 +832,17 @@ export function CanvasStage() {
   const stageRef = useRef<Konva.Stage | null>(null);
   const transformerRef = useRef<Konva.Transformer | null>(null);
   const assetNodeRefs = useRef<Record<string, Konva.Group | null>>({});
+  const generationJobNodeRefs = useRef<Record<string, Konva.Group | null>>({});
   const dragSessionRef = useRef<DragSession | null>(null);
   const dragPreviewPositionsRef = useRef<Record<string, Point> | null>(null);
+  const generationJobDragPreviewPositionsRef = useRef<Record<string, Point> | null>(null);
   const cameraRenderSettleTimerRef = useRef<number | null>(null);
   const interactionRenderSettleTimerRef = useRef<number | null>(null);
   const hasTrackedCameraRenderRef = useRef(false);
   const selectedAssetIdsRef = useRef<string[]>([]);
+  const selectedGenerationJobIdsRef = useRef<string[]>([]);
   const assetMapRef = useRef<Record<string, AssetItem>>({});
+  const generationJobMapRef = useRef<Record<string, GenerationJob>>({});
   const panSessionRef = useRef<{
     originPointer: Point;
     originCamera: Point;
@@ -789,12 +883,10 @@ export function CanvasStage() {
   const selectAsset = useAppStore((state) => state.selectAsset);
   const selectAssets = useAppStore((state) => state.selectAssets);
   const setCameraPosition = useAppStore((state) => state.setCameraPosition);
-  const setAssetPosition = useAppStore((state) => state.setAssetPosition);
-  const setAssetPositions = useAppStore((state) => state.setAssetPositions);
+  const setCanvasItemPositions = useAppStore((state) => state.setCanvasItemPositions);
   const updateTextAsset = useAppStore((state) => state.updateTextAsset);
   const finishTextEditing = useAppStore((state) => state.finishTextEditing);
   const setGenerationDraft = useAppStore((state) => state.setGenerationDraft);
-  const setGenerationJobCanvasPlacement = useAppStore((state) => state.setGenerationJobCanvasPlacement);
   const setCanvasInteractionActive = useAppStore((state) => state.setCanvasInteractionActive);
   const setMarquee = useAppStore((state) => state.setMarquee);
   const setSpacePressed = useAppStore((state) => state.setSpacePressed);
@@ -888,6 +980,25 @@ export function CanvasStage() {
     [setCanvasInteractionActive, setRenderInteractive],
   );
 
+  const clearCanvasSelection = useCallback(() => {
+    clearSelection();
+    setSelectedGenerationJobIds([]);
+  }, [clearSelection]);
+
+  const selectAllCanvasItems = useCallback(() => {
+    selectAll();
+    setSelectedGenerationJobIds(activeGenerationJobs.map((job) => job.id));
+  }, [activeGenerationJobs, selectAll]);
+
+  const handleCanvasDeleteSelection = useCallback(() => {
+    for (const jobId of selectedGenerationJobIdsRef.current) {
+      onCancelGeneration?.(jobId);
+    }
+
+    deleteSelection();
+    setSelectedGenerationJobIds([]);
+  }, [deleteSelection, onCancelGeneration]);
+
   useCanvasShortcuts({
     frameAll,
     frameSelection,
@@ -895,9 +1006,9 @@ export function CanvasStage() {
     copySelectionToClipboard,
     cutSelectionToClipboard,
     resetZoom,
-    selectAll,
+    selectAll: selectAllCanvasItems,
     duplicateSelection,
-    deleteSelection,
+    deleteSelection: handleCanvasDeleteSelection,
     toggleSelectedLocked,
     hideSelected,
     unhideSelected,
@@ -912,11 +1023,15 @@ export function CanvasStage() {
     sendSelectionToBack,
     groupSelection,
     ungroupSelection,
-    clearSelection,
+    clearSelection: clearCanvasSelection,
     setSpacePressed,
   });
 
   const selectedAssetSet = useMemo(() => new Set(selectedAssetIds), [selectedAssetIds]);
+  const selectedGenerationJobSet = useMemo(
+    () => new Set(selectedGenerationJobIds),
+    [selectedGenerationJobIds],
+  );
   const selectedTextAsset = useMemo(() => {
     if (selectedAssetIds.length !== 1) {
       return null;
@@ -937,6 +1052,11 @@ export function CanvasStage() {
     () => Object.fromEntries(assets.map((asset) => [asset.id, asset])),
     [assets],
   );
+  const generationJobMap = useMemo(
+    () => Object.fromEntries(activeGenerationJobs.map((job) => [job.id, job])),
+    [activeGenerationJobs],
+  );
+  const activeGenerationJobIdKey = activeGenerationJobs.map((job) => job.id).join("|");
   const renderMode: CanvasRenderMode = getCanvasRenderMode({
     isCameraRenderSettling,
     isInteractionRenderSettling,
@@ -1061,8 +1181,24 @@ export function CanvasStage() {
   }, [selectedAssetIds]);
 
   useEffect(() => {
+    selectedGenerationJobIdsRef.current = selectedGenerationJobIds;
+  }, [selectedGenerationJobIds]);
+
+  useEffect(() => {
     assetMapRef.current = assetMap;
   }, [assetMap]);
+
+  useEffect(() => {
+    generationJobMapRef.current = generationJobMap;
+  }, [generationJobMap]);
+
+  useEffect(() => {
+    setSelectedGenerationJobIds((currentIds) => {
+      const nextIds = currentIds.filter((jobId) => Boolean(generationJobMap[jobId]));
+
+      return areStringArraysEqual(currentIds, nextIds) ? currentIds : nextIds;
+    });
+  }, [activeGenerationJobIdKey, generationJobMap]);
 
   useEffect(() => {
     if (editingTextAssetId && !editingTextAsset) {
@@ -1229,18 +1365,38 @@ export function CanvasStage() {
     assetNodeRefs.current[assetId] = node;
   };
 
-  const syncDragPreviewNodes = (previewPositions: Record<string, Point>, activeAssetId: string) => {
-    for (const [id, previewPosition] of Object.entries(previewPositions)) {
-      if (id === activeAssetId) {
+  const setGenerationJobNodeRef = (jobId: string, node: Konva.Group | null) => {
+    generationJobNodeRefs.current[jobId] = node;
+  };
+
+  const syncDragPreviewNodes = (
+    assetPreviewPositions: Record<string, Point>,
+    generationJobPreviewPositions: Record<string, Point>,
+    activeItemId: string,
+    activeKind: DragSession["kind"],
+  ) => {
+    for (const [id, previewPosition] of Object.entries(assetPreviewPositions)) {
+      if (activeKind === "asset" && id === activeItemId) {
         continue;
       }
 
       assetNodeRefs.current[id]?.position(previewPosition);
     }
 
+    for (const [id, previewPosition] of Object.entries(generationJobPreviewPositions)) {
+      if (activeKind === "generation-job" && id === activeItemId) {
+        continue;
+      }
+
+      generationJobNodeRefs.current[id]?.position(previewPosition);
+    }
+
     const transformer = transformerRef.current;
     transformer?.forceUpdate();
     transformer?.getLayer()?.batchDraw();
+    for (const node of Object.values(generationJobNodeRefs.current)) {
+      node?.getLayer()?.batchDraw();
+    }
   };
 
   const commitTransformerState = () => {
@@ -1290,21 +1446,54 @@ export function CanvasStage() {
     );
   };
 
-  const beginAssetDrag = (assetId: string, position: Point) => {
+  const beginCanvasItemDrag = (
+    kind: DragSession["kind"],
+    itemId: string,
+    position: Point,
+  ) => {
     setCanvasInteractionPreviewActive(true);
-    const currentSelectedIds = selectedAssetIdsRef.current;
+    const currentSelectedAssetIds = selectedAssetIdsRef.current;
+    const currentSelectedGenerationJobIds = selectedGenerationJobIdsRef.current;
     const currentAssetMap = assetMapRef.current;
-    const isCurrentlySelected = currentSelectedIds.includes(assetId);
-    const activeIds = isCurrentlySelected ? currentSelectedIds : [assetId];
-    const movableIds = activeIds.filter((id) => !currentAssetMap[id]?.locked);
+    const currentGenerationJobMap = generationJobMapRef.current;
+    const isAssetSelected = kind === "asset" && currentSelectedAssetIds.includes(itemId);
+    const isGenerationJobSelected =
+      kind === "generation-job" && currentSelectedGenerationJobIds.includes(itemId);
+    const selectedAssetIdsForDrag =
+      kind === "asset"
+        ? isAssetSelected
+          ? currentSelectedAssetIds
+          : [itemId]
+        : isGenerationJobSelected
+          ? currentSelectedAssetIds
+          : [];
+    const selectedGenerationJobIdsForDrag =
+      kind === "generation-job"
+        ? isGenerationJobSelected
+          ? currentSelectedGenerationJobIds
+          : [itemId]
+        : isAssetSelected
+          ? currentSelectedGenerationJobIds
+          : [];
+    const movableAssetIds = selectedAssetIdsForDrag.filter((id) => !currentAssetMap[id]?.locked);
+    const movableGenerationJobIds = selectedGenerationJobIdsForDrag.filter((id) =>
+      Boolean(currentGenerationJobMap[id]),
+    );
 
-    if (!isCurrentlySelected) {
-      selectAsset(assetId);
+    if (kind === "asset" && !isAssetSelected) {
+      setSelectedGenerationJobIds([]);
+      selectAsset(itemId);
+    }
+
+    if (kind === "generation-job" && !isGenerationJobSelected) {
+      clearSelection();
+      setSelectedGenerationJobIds([itemId]);
     }
 
     dragPreviewPositionsRef.current = null;
-    const startPositions = Object.fromEntries(
-      movableIds
+    generationJobDragPreviewPositionsRef.current = null;
+    const assetStartPositions = Object.fromEntries(
+      movableAssetIds
         .map((id) => {
           const asset = currentAssetMap[id];
 
@@ -1316,19 +1505,43 @@ export function CanvasStage() {
         })
         .filter((entry): entry is readonly [string, Point] => Boolean(entry)),
     );
+    const generationJobStartPositions = Object.fromEntries(
+      movableGenerationJobIds
+        .map((id) => {
+          const job = currentGenerationJobMap[id];
+
+          if (!job) {
+            return null;
+          }
+
+          return [id, job.canvasPlacement] as const;
+        })
+        .filter((entry): entry is readonly [string, Point] => Boolean(entry)),
+    );
+    const originPosition =
+      kind === "asset"
+        ? assetStartPositions[itemId] ?? position
+        : generationJobStartPositions[itemId] ?? position;
 
     dragSessionRef.current = {
-      assetId,
-      selectedIds: movableIds,
-      originPosition: startPositions[assetId] ?? position,
-      startPositions,
+      itemId,
+      kind,
+      selectedAssetIds: movableAssetIds,
+      selectedGenerationJobIds: movableGenerationJobIds,
+      originPosition,
+      assetStartPositions,
+      generationJobStartPositions,
     };
   };
 
-  const updateAssetDrag = (assetId: string, position: Point) => {
+  const updateCanvasItemDrag = (
+    kind: DragSession["kind"],
+    itemId: string,
+    position: Point,
+  ) => {
     const dragSession = dragSessionRef.current;
 
-    if (!dragSession || dragSession.assetId !== assetId) {
+    if (!dragSession || dragSession.kind !== kind || dragSession.itemId !== itemId) {
       return;
     }
 
@@ -1336,10 +1549,23 @@ export function CanvasStage() {
       x: position.x - dragSession.originPosition.x,
       y: position.y - dragSession.originPosition.y,
     };
-    const previewPositions = Object.fromEntries(
-      dragSession.selectedIds
+    const assetPreviewPositions = Object.fromEntries(
+      dragSession.selectedAssetIds
         .map((id) => {
-          const startPosition = dragSession.startPositions[id];
+          const startPosition = dragSession.assetStartPositions[id];
+
+          if (!startPosition) {
+            return null;
+          }
+
+          return [id, { x: startPosition.x + delta.x, y: startPosition.y + delta.y }] as const;
+        })
+        .filter((entry): entry is readonly [string, Point] => Boolean(entry)),
+    );
+    const generationJobPreviewPositions = Object.fromEntries(
+      dragSession.selectedGenerationJobIds
+        .map((id) => {
+          const startPosition = dragSession.generationJobStartPositions[id];
 
           if (!startPosition) {
             return null;
@@ -1350,20 +1576,34 @@ export function CanvasStage() {
         .filter((entry): entry is readonly [string, Point] => Boolean(entry)),
     );
 
-    if (Object.keys(previewPositions).length === 0) {
+    if (
+      Object.keys(assetPreviewPositions).length === 0
+      && Object.keys(generationJobPreviewPositions).length === 0
+    ) {
       return;
     }
 
-    dragPreviewPositionsRef.current = previewPositions;
-    syncDragPreviewNodes(previewPositions, assetId);
+    dragPreviewPositionsRef.current = assetPreviewPositions;
+    generationJobDragPreviewPositionsRef.current = generationJobPreviewPositions;
+    syncDragPreviewNodes(assetPreviewPositions, generationJobPreviewPositions, itemId, kind);
   };
 
-  const endAssetDrag = (assetId: string, position: Point) => {
+  const endCanvasItemDrag = (
+    kind: DragSession["kind"],
+    itemId: string,
+    position: Point,
+  ) => {
     const dragSession = dragSessionRef.current;
 
-    if (!dragSession || dragSession.assetId !== assetId) {
-      setAssetPosition(assetId, position);
+    if (!dragSession || dragSession.kind !== kind || dragSession.itemId !== itemId) {
+      if (kind === "asset") {
+        setCanvasItemPositions({ assetPositions: [{ id: itemId, position }] });
+      } else {
+        setCanvasItemPositions({ generationJobPlacements: [{ id: itemId, position }] });
+      }
+
       dragPreviewPositionsRef.current = null;
+      generationJobDragPreviewPositionsRef.current = null;
       setCanvasInteractionPreviewActive(false);
       return;
     }
@@ -1372,9 +1612,9 @@ export function CanvasStage() {
       x: position.x - dragSession.originPosition.x,
       y: position.y - dragSession.originPosition.y,
     };
-    const updates = dragSession.selectedIds
+    const assetUpdates = dragSession.selectedAssetIds
       .map((id) => {
-        const startPosition = dragSession.startPositions[id];
+        const startPosition = dragSession.assetStartPositions[id];
 
         if (!startPosition) {
           return null;
@@ -1389,12 +1629,38 @@ export function CanvasStage() {
         };
       })
       .filter((update): update is { id: string; position: Point } => Boolean(update));
+    const generationJobUpdates = dragSession.selectedGenerationJobIds
+      .map((id) => {
+        const startPosition = dragSession.generationJobStartPositions[id];
 
-    dragPreviewPositionsRef.current = Object.fromEntries(updates.map((update) => [update.id, update.position]));
-    syncDragPreviewNodes(dragPreviewPositionsRef.current, assetId);
-    setAssetPositions(updates);
+        if (!startPosition) {
+          return null;
+        }
+
+        return {
+          id,
+          position: {
+            x: startPosition.x + delta.x,
+            y: startPosition.y + delta.y,
+          },
+        };
+      })
+      .filter((update): update is { id: string; position: Point } => Boolean(update));
+    const assetPreviewPositions = Object.fromEntries(assetUpdates.map((update) => [update.id, update.position]));
+    const generationJobPreviewPositions = Object.fromEntries(
+      generationJobUpdates.map((update) => [update.id, update.position]),
+    );
+
+    dragPreviewPositionsRef.current = assetPreviewPositions;
+    generationJobDragPreviewPositionsRef.current = generationJobPreviewPositions;
+    syncDragPreviewNodes(assetPreviewPositions, generationJobPreviewPositions, itemId, kind);
+    setCanvasItemPositions({
+      assetPositions: assetUpdates,
+      generationJobPlacements: generationJobUpdates,
+    });
     dragSessionRef.current = null;
     dragPreviewPositionsRef.current = null;
+    generationJobDragPreviewPositionsRef.current = null;
     setCanvasInteractionPreviewActive(false);
   };
 
@@ -1408,7 +1674,7 @@ export function CanvasStage() {
 
     if (!pointer || (width < 4 && height < 4)) {
       if (!marqueeSession.additive) {
-        clearSelection();
+        clearCanvasSelection();
       }
 
       setMarquee(null);
@@ -1421,10 +1687,42 @@ export function CanvasStage() {
           .filter((asset) => rectsIntersect(getAssetBounds(asset), marquee))
           .map((asset) => asset.id)
       : [];
+    const generationJobHits = marquee
+      ? activeGenerationJobs
+          .filter((job) => rectsIntersect(getGenerationJobBounds(job), marquee))
+          .map((job) => job.id)
+      : [];
 
     selectAssets(hits, { additive: marqueeSession.additive });
+    setSelectedGenerationJobIds((currentIds) =>
+      marqueeSession.additive
+        ? Array.from(new Set([...currentIds, ...generationJobHits]))
+        : generationJobHits,
+    );
     setMarquee(null);
     setMarqueeSession(null);
+  };
+
+  const handleAssetSelect = (assetId: string, additive: boolean) => {
+    if (!additive) {
+      setSelectedGenerationJobIds([]);
+    }
+
+    selectAsset(assetId, { additive });
+  };
+
+  const handleGenerationJobSelect = (jobId: string, additive: boolean) => {
+    if (additive) {
+      setSelectedGenerationJobIds((currentIds) =>
+        currentIds.includes(jobId)
+          ? currentIds.filter((id) => id !== jobId)
+          : [...currentIds, jobId],
+      );
+      return;
+    }
+
+    clearSelection();
+    setSelectedGenerationJobIds([jobId]);
   };
 
   const openContextMenuAt = (clientPosition: Point) => {
@@ -1447,6 +1745,10 @@ export function CanvasStage() {
     additive: boolean,
   ) => {
     if (!isSelected) {
+      if (!additive) {
+        setSelectedGenerationJobIds([]);
+      }
+
       selectAsset(assetId, { additive });
     }
 
@@ -1611,10 +1913,10 @@ export function CanvasStage() {
                     onContextMenu={handleAssetContextMenu}
                     onEditText={beginTextEditing}
                     onInteractionActiveChange={setCanvasInteractionPreviewActive}
-                    onSelect={(assetId, additive) => selectAsset(assetId, { additive })}
-                    onBeginDrag={beginAssetDrag}
-                    onDrag={updateAssetDrag}
-                    onEndDrag={endAssetDrag}
+                    onSelect={handleAssetSelect}
+                    onBeginDrag={(assetId, position) => beginCanvasItemDrag("asset", assetId, position)}
+                    onDrag={(assetId, position) => updateCanvasItemDrag("asset", assetId, position)}
+                    onEndDrag={(assetId, position) => endCanvasItemDrag("asset", assetId, position)}
                     setNodeRef={setNodeRef}
                   />
                 );
@@ -1650,19 +1952,34 @@ export function CanvasStage() {
             </Layer>
 
             <Layer>
-              {activeGenerationJobs.map((job) => (
-                <GenerationJobPlaceholderItem
-                  key={job.id}
-                  job={job}
-                  referenceAssets={job.request.selectedAssetIds
-                    .map((assetId) => assetRegistry[assetId])
-                    .filter((asset): asset is AssetItem => Boolean(asset) && isImageAsset(asset))}
-                  animationTick={generationAnimationTick}
-                  isPanMode={isPanInteractionMode}
-                  onDrag={setGenerationJobCanvasPlacement}
-                  onInteractionActiveChange={setCanvasInteractionPreviewActive}
-                />
-              ))}
+              {activeGenerationJobs.map((job) => {
+                const previewPosition = generationJobDragPreviewPositionsRef.current?.[job.id];
+                const displayJob = previewPosition
+                  ? {
+                      ...job,
+                      canvasPlacement: previewPosition,
+                    }
+                  : job;
+
+                return (
+                  <GenerationJobPlaceholderItem
+                    key={job.id}
+                    job={displayJob}
+                    referenceAssets={job.request.selectedAssetIds
+                      .map((assetId) => assetRegistry[assetId])
+                      .filter((asset): asset is AssetItem => Boolean(asset) && isImageAsset(asset))}
+                    animationTick={generationAnimationTick}
+                    isSelected={selectedGenerationJobSet.has(job.id)}
+                    isPanMode={isPanInteractionMode}
+                    onSelect={handleGenerationJobSelect}
+                    onBeginDrag={(jobId, position) => beginCanvasItemDrag("generation-job", jobId, position)}
+                    onDrag={(jobId, position) => updateCanvasItemDrag("generation-job", jobId, position)}
+                    onEndDrag={(jobId, position) => endCanvasItemDrag("generation-job", jobId, position)}
+                    onInteractionActiveChange={setCanvasInteractionPreviewActive}
+                    setNodeRef={setGenerationJobNodeRef}
+                  />
+                );
+              })}
             </Layer>
 
             <Layer listening={false}>

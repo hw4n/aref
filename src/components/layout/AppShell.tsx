@@ -711,7 +711,7 @@ export function AppShell() {
                 <strong>Drop images to import</strong>
               </div>
             ) : null}
-            <CanvasStage />
+            <CanvasStage onCancelGeneration={cancelGeneration} />
           </div>
           {settingsOpen ? (
             <div

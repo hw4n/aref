@@ -445,6 +445,36 @@ describe("app store", () => {
     });
   });
 
+  it("moves selected assets and generation placeholders in one history entry", () => {
+    const store = createSeededStore();
+    const jobId = store.getState().queueGenerationJob(sampleGenerationRequest);
+
+    store.getState().setCanvasItemPositions({
+      assetPositions: [{ id: "asset-forest", position: { x: 300, y: 320 } }],
+      generationJobPlacements: [{ id: jobId, position: { x: 720, y: 360 } }],
+    });
+
+    expect(store.getState().project.assets["asset-forest"]).toMatchObject({
+      x: 300,
+      y: 320,
+    });
+    expect(store.getState().project.jobs[jobId]?.canvasPlacement).toEqual({
+      x: 720,
+      y: 360,
+    });
+
+    store.getState().undoProjectChange();
+
+    expect(store.getState().project.assets["asset-forest"]).toMatchObject({
+      x: -420,
+      y: -120,
+    });
+    expect(store.getState().project.jobs[jobId]?.canvasPlacement).not.toEqual({
+      x: 720,
+      y: 360,
+    });
+  });
+
   it("removes generation jobs from the project job list", () => {
     const store = createAppStore();
     const jobId = store.getState().queueGenerationJob(sampleGenerationRequest);

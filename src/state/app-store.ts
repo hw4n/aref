@@ -111,6 +111,10 @@ export interface AppStoreState {
   setAssetThumbnailPath: (assetId: string, thumbnailPath: string) => void;
   setAssetPosition: (assetId: string, position: Point) => void;
   setAssetPositions: (updates: Array<{ id: string; position: Point }>) => void;
+  setCanvasItemPositions: (updates: {
+    assetPositions?: Array<{ id: string; position: Point }>;
+    generationJobPlacements?: Array<{ id: string; position: Point }>;
+  }) => void;
   moveAssetsBy: (assetIds: string[], delta: Point) => void;
   commitAssetTransforms: (updates: AssetTransformCommit[]) => void;
   hydrateUiPreferences: (preferences: Partial<AppUiPreferences>) => void;
@@ -787,6 +791,60 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
           project: bumpProject({
             ...state.project,
             assets: nextAssets,
+          }),
+        });
+      });
+    },
+    setCanvasItemPositions: ({ assetPositions = [], generationJobPlacements = [] }) => {
+      if (assetPositions.length === 0 && generationJobPlacements.length === 0) {
+        return;
+      }
+
+      set((state) => {
+        const timestamp = new Date().toISOString();
+        let didChange = false;
+        const nextAssets = { ...state.project.assets };
+        const nextJobs = { ...state.project.jobs };
+
+        for (const { id, position } of assetPositions) {
+          const asset = nextAssets[id];
+
+          if (!asset || asset.locked || (asset.x === position.x && asset.y === position.y)) {
+            continue;
+          }
+
+          nextAssets[id] = {
+            ...asset,
+            x: position.x,
+            y: position.y,
+            updatedAt: timestamp,
+          };
+          didChange = true;
+        }
+
+        for (const { id, position } of generationJobPlacements) {
+          const job = nextJobs[id];
+
+          if (!job || (job.canvasPlacement.x === position.x && job.canvasPlacement.y === position.y)) {
+            continue;
+          }
+
+          nextJobs[id] = {
+            ...job,
+            canvasPlacement: position,
+          };
+          didChange = true;
+        }
+
+        if (!didChange) {
+          return state;
+        }
+
+        return pushProjectHistory(state, {
+          project: bumpProject({
+            ...state.project,
+            assets: nextAssets,
+            jobs: nextJobs,
           }),
         });
       });
