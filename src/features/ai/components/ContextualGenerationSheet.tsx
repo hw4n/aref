@@ -18,12 +18,13 @@ import {
   SparklesIcon,
 } from "@/components/icons/ui-icons";
 import { isImageAsset, type AssetItem } from "@/domain/assets/types";
-import type {
-  GenerationImageSize,
-  GenerationImageQuality,
-  GenerationModeration,
-  GenerationBulkGrid,
-  GenerationRequest,
+import {
+  GENERATION_BULK_GRID_LIMIT,
+  type GenerationBulkGrid,
+  type GenerationImageQuality,
+  type GenerationImageSize,
+  type GenerationModeration,
+  type GenerationRequest,
 } from "@/domain/jobs/types";
 import type { GenerationProviderAdapter } from "@/domain/providers/types";
 import { AssetThumbnail } from "@/features/images/components/AssetThumbnail";
@@ -43,7 +44,6 @@ const SIZE_OPTIONS: GenerationImageSize[] = [
 const QUALITY_OPTIONS: GenerationImageQuality[] = ["low", "medium", "high", "auto"];
 const MODERATION_OPTIONS: GenerationModeration[] = ["low", "auto"];
 const COUNT_OPTIONS = [1, 2, 4];
-const BULK_GRID_LIMIT = 4;
 
 function getSizeLabel(size: GenerationImageSize) {
   if (size === "auto") {
@@ -411,31 +411,34 @@ export function ContextualGenerationSheet({
               className="generation-sheet__bulk-grid-picker"
               onMouseLeave={() => setHoveredBulkGrid(null)}
             >
-              {Array.from({ length: BULK_GRID_LIMIT * BULK_GRID_LIMIT }, (_unused, index) => {
-                const column = (index % BULK_GRID_LIMIT) + 1;
-                const row = Math.floor(index / BULK_GRID_LIMIT) + 1;
-                const isActive = column <= activeBulkGrid.columns && row <= activeBulkGrid.rows;
-                const isSelected =
-                  column <= generationDraft.bulkGrid.columns
-                  && row <= generationDraft.bulkGrid.rows;
+              {Array.from(
+                { length: GENERATION_BULK_GRID_LIMIT * GENERATION_BULK_GRID_LIMIT },
+                (_unused, index) => {
+                  const column = (index % GENERATION_BULK_GRID_LIMIT) + 1;
+                  const row = Math.floor(index / GENERATION_BULK_GRID_LIMIT) + 1;
+                  const isActive = column <= activeBulkGrid.columns && row <= activeBulkGrid.rows;
+                  const isSelected =
+                    column <= generationDraft.bulkGrid.columns
+                    && row <= generationDraft.bulkGrid.rows;
 
-                return (
-                  <button
-                    key={`${column}-${row}`}
-                    aria-label={`${column} by ${row} bulk grid`}
-                    className={[
-                      "generation-sheet__bulk-grid-cell",
-                      isActive ? "generation-sheet__bulk-grid-cell--active" : "",
-                      isSelected ? "generation-sheet__bulk-grid-cell--selected" : "",
-                    ].filter(Boolean).join(" ")}
-                    title={`${column} x ${row}`}
-                    type="button"
-                    onClick={() => setGenerationDraft({ bulkGrid: { columns: column, rows: row } })}
-                    onFocus={() => setHoveredBulkGrid({ columns: column, rows: row })}
-                    onMouseEnter={() => setHoveredBulkGrid({ columns: column, rows: row })}
-                  />
-                );
-              })}
+                  return (
+                    <button
+                      key={`${column}-${row}`}
+                      aria-label={`${column} by ${row} bulk grid`}
+                      className={[
+                        "generation-sheet__bulk-grid-cell",
+                        isActive ? "generation-sheet__bulk-grid-cell--active" : "",
+                        isSelected ? "generation-sheet__bulk-grid-cell--selected" : "",
+                      ].filter(Boolean).join(" ")}
+                      title={`${column} x ${row}`}
+                      type="button"
+                      onClick={() => setGenerationDraft({ bulkGrid: { columns: column, rows: row } })}
+                      onFocus={() => setHoveredBulkGrid({ columns: column, rows: row })}
+                      onMouseEnter={() => setHoveredBulkGrid({ columns: column, rows: row })}
+                    />
+                  );
+                },
+              )}
             </div>
             <span className="generation-sheet__bulk-grid-meta">
               {bulkJobCount === 1 ? "Single job" : `${bulkJobCount} queued jobs`}

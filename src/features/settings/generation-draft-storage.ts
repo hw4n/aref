@@ -1,4 +1,9 @@
-import type { GenerationImageQuality, GenerationImageSize, GenerationModeration } from "@/domain/jobs/types";
+import {
+  GENERATION_BULK_GRID_LIMIT,
+  type GenerationImageQuality,
+  type GenerationImageSize,
+  type GenerationModeration,
+} from "@/domain/jobs/types";
 import type { GenerationSheetDraft } from "@/domain/ui/types";
 
 export const GENERATION_DRAFT_STORAGE_KEY = "aref.generation-draft.v1";
@@ -81,7 +86,7 @@ function normalizeImageCount(value: unknown) {
 
 function normalizeBulkGridAxis(value: unknown) {
   return typeof value === "number" && Number.isFinite(value)
-    ? Math.max(1, Math.min(4, Math.round(value)))
+    ? Math.max(1, Math.min(GENERATION_BULK_GRID_LIMIT, Math.round(value)))
     : 1;
 }
 

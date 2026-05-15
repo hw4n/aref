@@ -88,7 +88,7 @@ describe("generation draft storage", () => {
         },
       }).bulkGrid,
     ).toEqual({
-      columns: 4,
+      columns: 8,
       rows: 1,
     });
   });

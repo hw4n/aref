@@ -23,10 +23,10 @@ const request: GenerationRequest = {
 
 describe("generation layout", () => {
   it("places bulk generation jobs in a non-overlapping grid", () => {
-    const placements = computeBulkGenerationPlacements(request, 3, 2, { x: 0, y: 0 });
+    const placements = computeBulkGenerationPlacements(request, 8, 8, { x: 0, y: 0 });
     const bounds = placements.map((placement) => getGenerationRequestPlaceholderBounds(request, placement));
 
-    expect(placements).toHaveLength(6);
+    expect(placements).toHaveLength(64);
     for (let index = 0; index < bounds.length; index += 1) {
       for (let otherIndex = index + 1; otherIndex < bounds.length; otherIndex += 1) {
         expect(rectsIntersect(bounds[index]!, bounds[otherIndex]!)).toBe(false);

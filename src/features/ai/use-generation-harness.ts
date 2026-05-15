@@ -6,7 +6,11 @@ import {
   findAvailableGenerationPlacement,
   getViewportCenter,
 } from "@/domain/jobs/generation-layout";
-import type { GenerationBulkGrid, GenerationRequest } from "@/domain/jobs/types";
+import {
+  GENERATION_BULK_GRID_LIMIT,
+  type GenerationBulkGrid,
+  type GenerationRequest,
+} from "@/domain/jobs/types";
 import type { Point } from "@/domain/shared/types";
 import { getGenerationProvider, listGenerationProviders } from "@/services/providers/provider-registry";
 import {
@@ -246,8 +250,14 @@ export function useGenerationHarness(options: UseGenerationHarnessOptions = {}) 
         negativePrompt: request.negativePrompt?.trim() || undefined,
       };
       const bulkGrid = submitOptions.bulkGrid ?? { columns: 1, rows: 1 };
-      const bulkColumns = Math.max(1, Math.min(4, Math.round(bulkGrid.columns)));
-      const bulkRows = Math.max(1, Math.min(4, Math.round(bulkGrid.rows)));
+      const bulkColumns = Math.max(
+        1,
+        Math.min(GENERATION_BULK_GRID_LIMIT, Math.round(bulkGrid.columns)),
+      );
+      const bulkRows = Math.max(
+        1,
+        Math.min(GENERATION_BULK_GRID_LIMIT, Math.round(bulkGrid.rows)),
+      );
       const bulkJobCount = bulkColumns * bulkRows;
 
       if (bulkJobCount <= 1) {

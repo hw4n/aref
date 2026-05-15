@@ -389,6 +389,7 @@ export function InspectorPanel({
   const generationJobs = useAppStore(selectSortedGenerationJobs);
   const openAiProviderLogs = useProviderRequestLogs("openai", PROVIDER_LOG_LIMIT);
   const ima2SidecarProviderLogs = useProviderRequestLogs("ima2-sidecar", PROVIDER_LOG_LIMIT);
+  const removeFailedGenerationJobs = useAppStore((state) => state.removeFailedGenerationJobs);
   const selectedAssetIds = useAppStore((state) => state.project.selection.assetIds);
   const revealHiddenAsset = useAppStore((state) => state.revealHiddenAsset);
   const selectAsset = useAppStore((state) => state.selectAsset);
@@ -400,8 +401,10 @@ export function InspectorPanel({
   const redoVisibilityChange = useAppStore((state) => state.redoVisibilityChange);
   const undoVisibilityCount = useAppStore((state) => state.visibilityHistory.undoStack.length);
   const redoVisibilityCount = useAppStore((state) => state.visibilityHistory.redoStack.length);
+  const pushToast = useAppStore((state) => state.pushToast);
 
   const hiddenAssetCount = sortedAssets.filter((asset) => asset.hidden).length;
+  const failedGenerationJobCount = generationJobs.filter((job) => job.status === "failed").length;
   const providerLogEntries = useMemo(
     () =>
       [...openAiProviderLogs.entries, ...ima2SidecarProviderLogs.entries].sort(
@@ -427,6 +430,19 @@ export function InspectorPanel({
   useEffect(() => {
     reloadProviderLogs();
   }, [generationJobLogRefreshKey, reloadProviderLogs]);
+
+  const handleRemoveFailedJobs = useCallback(() => {
+    if (failedGenerationJobCount === 0) {
+      return;
+    }
+
+    removeFailedGenerationJobs();
+    pushToast({
+      kind: "info",
+      title: "Failed jobs removed",
+      description: `${failedGenerationJobCount} failed job${failedGenerationJobCount === 1 ? "" : "s"} removed from the list.`,
+    });
+  }, [failedGenerationJobCount, pushToast, removeFailedGenerationJobs]);
 
   const filteredAssets = useMemo(
     () =>
@@ -537,7 +553,18 @@ export function InspectorPanel({
               <RunningIcon size={16} />
               <h3>Jobs</h3>
             </div>
-            <strong className="inspector-panel__count">{generationJobs.length}</strong>
+            <div className="inspector-panel__header-actions">
+              <button
+                className="inspector-panel__header-action inspector-panel__header-action--danger"
+                disabled={failedGenerationJobCount === 0}
+                onClick={handleRemoveFailedJobs}
+                title={failedGenerationJobCount > 0 ? "Remove all failed jobs" : "No failed jobs"}
+              >
+                <RemoveJobIcon size={14} />
+                <span>Remove Failed</span>
+              </button>
+              <strong className="inspector-panel__count">{generationJobs.length}</strong>
+            </div>
           </header>
 
           {generationJobs.length > 0 ? (

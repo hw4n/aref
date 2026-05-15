@@ -1,5 +1,7 @@
 import type { ID, Point } from "@/domain/shared/types";
 
+export const GENERATION_BULK_GRID_LIMIT = 8;
+
 export type GenerationJobStatus =
   | "queued"
   | "running"

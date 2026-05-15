@@ -1060,6 +1060,25 @@ button:disabled {
   gap: 6px;
   padding: 0.45rem 0.65rem;
   font-size: 0.76rem;
+  white-space: nowrap;
+}
+
+.inspector-panel__header-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+
+.inspector-panel__header-action--danger {
+  color: #ffb4ab;
+  border-color: rgba(255, 107, 107, 0.3);
+}
+
+.inspector-panel__header-action--danger:not(:disabled):hover {
+  border-color: rgba(255, 107, 107, 0.55);
+  background: rgba(255, 107, 107, 0.1);
 }
 
 .inspector-panel__title {
@@ -1413,13 +1432,13 @@ button:disabled {
 
 .generation-sheet__bulk-grid-picker {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 5px;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 4px;
 }
 
 .generation-sheet__bulk-grid-cell {
   aspect-ratio: 1;
-  min-height: 26px;
+  min-height: 20px;
   padding: 0;
   border: 1px solid rgba(155, 174, 196, 0.22);
   background: #10171f;

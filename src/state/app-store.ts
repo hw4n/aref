@@ -169,6 +169,7 @@ export interface AppStoreState {
   failGenerationJob: (jobId: string, error: string) => void;
   cancelGenerationJob: (jobId: string) => void;
   removeGenerationJob: (jobId: string) => void;
+  removeFailedGenerationJobs: () => void;
   appendDiagnosticLog: (entry: {
     level: DiagnosticLogLevel;
     scope: DiagnosticLogScope;
@@ -1675,6 +1676,32 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
 
         const nextJobs = { ...state.project.jobs };
         delete nextJobs[jobId];
+
+        return {
+          project: bumpProject({
+            ...state.project,
+            jobs: nextJobs,
+          }),
+        };
+      });
+    },
+    removeFailedGenerationJobs: () => {
+      set((state) => {
+        const nextJobs: Project["jobs"] = {};
+        let hasFailedJobs = false;
+
+        for (const [jobId, job] of Object.entries(state.project.jobs)) {
+          if (job.status === "failed") {
+            hasFailedJobs = true;
+            continue;
+          }
+
+          nextJobs[jobId] = job;
+        }
+
+        if (!hasFailedJobs) {
+          return state;
+        }
 
         return {
           project: bumpProject({

@@ -504,6 +504,21 @@ describe("app store", () => {
     expect(store.getState().project.jobs[jobId]).toBeUndefined();
   });
 
+  it("removes all failed generation jobs from the project job list", () => {
+    const store = createAppStore();
+    const failedJobId = store.getState().queueGenerationJob(sampleGenerationRequest);
+    const queuedJobId = store.getState().queueGenerationJob(sampleGenerationRequest);
+    const cancelledJobId = store.getState().queueGenerationJob(sampleGenerationRequest);
+
+    store.getState().failGenerationJob(failedJobId, "Provider returned no image data.");
+    store.getState().cancelGenerationJob(cancelledJobId);
+    store.getState().removeFailedGenerationJobs();
+
+    expect(store.getState().project.jobs[failedJobId]).toBeUndefined();
+    expect(store.getState().project.jobs[queuedJobId]?.status).toBe("queued");
+    expect(store.getState().project.jobs[cancelledJobId]?.status).toBe("cancelled");
+  });
+
   it("preserves selection references across a project replacement roundtrip", () => {
     const store = createAppStore();
     store.getState().importAssets([
