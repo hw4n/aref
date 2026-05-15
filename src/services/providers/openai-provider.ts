@@ -22,6 +22,7 @@ import { mapWithConcurrency } from "./generation-concurrency";
 
 const OPENAI_POLL_INTERVAL_MS = 650;
 const REFERENCE_PREP_CONCURRENCY = 2;
+const AGGRESSIVE_REFERENCE_PREP_CONCURRENCY = 4;
 const OPENAI_SUPPORTED_REFERENCE_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
 
 const EXTENSION_TO_MIME_TYPE: Record<string, string> = {
@@ -179,7 +180,9 @@ export const openAiGenerationProvider: OneShotGenerationProviderAdapter = {
     const compressReferenceImages = invocation.request.settings.compressReferenceImages !== false;
     const referenceImages = await mapWithConcurrency(
       invocation.referenceAssets,
-      REFERENCE_PREP_CONCURRENCY,
+      invocation.concurrencyMode === "aggressive"
+        ? AGGRESSIVE_REFERENCE_PREP_CONCURRENCY
+        : REFERENCE_PREP_CONCURRENCY,
       options.signal,
       (asset, index) => readReferenceImagePayload(asset, index, compressReferenceImages),
     );

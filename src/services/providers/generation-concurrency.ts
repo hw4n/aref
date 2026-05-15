@@ -2,8 +2,10 @@ import type { GenerationProviderInvocation } from "@/domain/providers/types";
 
 type ReleasePermit = () => void;
 
-const IMA2_SIDECAR_CONCURRENCY = 2;
-const OPENAI_CONCURRENCY = 3;
+const STABLE_IMA2_SIDECAR_CONCURRENCY = 2;
+const AGGRESSIVE_IMA2_SIDECAR_CONCURRENCY = 4;
+const STABLE_OPENAI_CONCURRENCY = 3;
+const AGGRESSIVE_OPENAI_CONCURRENCY = 8;
 const MOCK_CONCURRENCY = 4;
 const REFERENCE_HEAVY_COUNT = 3;
 
@@ -102,13 +104,15 @@ export interface GenerationConcurrencyPlan {
 
 const providerQueues = new Map<string, WeightedSemaphore>();
 
-function providerCapacity(providerId: string) {
-  if (providerId === "ima2-sidecar") {
-    return IMA2_SIDECAR_CONCURRENCY;
+function providerCapacity(invocation: GenerationProviderInvocation) {
+  const aggressive = invocation.concurrencyMode === "aggressive";
+
+  if (invocation.request.provider === "ima2-sidecar") {
+    return aggressive ? AGGRESSIVE_IMA2_SIDECAR_CONCURRENCY : STABLE_IMA2_SIDECAR_CONCURRENCY;
   }
 
-  if (providerId === "openai") {
-    return OPENAI_CONCURRENCY;
+  if (invocation.request.provider === "openai") {
+    return aggressive ? AGGRESSIVE_OPENAI_CONCURRENCY : STABLE_OPENAI_CONCURRENCY;
   }
 
   return MOCK_CONCURRENCY;
@@ -121,9 +125,13 @@ function isHeavyGeneration(invocation: GenerationProviderInvocation) {
 }
 
 export function getGenerationConcurrencyPlan(invocation: GenerationProviderInvocation): GenerationConcurrencyPlan {
-  const capacity = providerCapacity(invocation.request.provider);
+  const capacity = providerCapacity(invocation);
   const isHeavy = isHeavyGeneration(invocation);
-  const permits = normalizePermitCount(isHeavy && invocation.request.provider !== "mock" ? 2 : 1, capacity);
+  const shouldReserveExtraCapacity =
+    invocation.concurrencyMode !== "aggressive"
+    && isHeavy
+    && invocation.request.provider !== "mock";
+  const permits = normalizePermitCount(shouldReserveExtraCapacity ? 2 : 1, capacity);
 
   return {
     providerId: invocation.request.provider,
@@ -134,14 +142,15 @@ export function getGenerationConcurrencyPlan(invocation: GenerationProviderInvoc
 }
 
 function providerQueue(providerId: string, capacity: number) {
-  const existing = providerQueues.get(providerId);
+  const key = `${providerId}:${capacity}`;
+  const existing = providerQueues.get(key);
 
   if (existing) {
     return existing;
   }
 
   const next = new WeightedSemaphore(capacity);
-  providerQueues.set(providerId, next);
+  providerQueues.set(key, next);
   return next;
 }
 

@@ -47,6 +47,7 @@ const baseInvocation: GenerationProviderInvocation = {
     },
   },
   referenceAssets: [],
+  concurrencyMode: "stable",
 };
 
 describe("ima2 sidecar generation provider", () => {
@@ -111,6 +112,7 @@ describe("ima2 sidecar generation provider", () => {
         moderation: "auto",
       },
       referenceImages: [],
+      concurrencyMode: "stable",
     });
     expect(onStatusChange).toHaveBeenCalledWith("running");
     expect(result).toMatchObject({

@@ -5,6 +5,7 @@ import type {
   GenerationJobStatus,
   GenerationModeration,
 } from "@/domain/jobs/types";
+import type { GenerationConcurrencyMode } from "@/domain/providers/types";
 import type {
   Ima2SidecarLoginLaunchSnapshot,
   Ima2SidecarSettingsSnapshot,
@@ -33,6 +34,7 @@ export interface StartIma2SidecarGenerationInput {
     moderation: GenerationModeration;
   };
   referenceImages: Ima2SidecarReferenceImagePayload[];
+  concurrencyMode?: GenerationConcurrencyMode;
 }
 
 export interface Ima2SidecarOperationSubmission {

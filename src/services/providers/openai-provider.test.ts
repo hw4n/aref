@@ -47,6 +47,7 @@ const baseInvocation: GenerationProviderInvocation = {
     },
   },
   referenceAssets: [],
+  concurrencyMode: "stable",
 };
 
 describe("openai generation provider", () => {

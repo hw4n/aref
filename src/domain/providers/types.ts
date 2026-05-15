@@ -1,6 +1,7 @@
 import type { AssetItem } from "@/domain/assets/types";
 import type { GenerationJobStatus, GenerationRequest } from "@/domain/jobs/types";
 
+export type GenerationConcurrencyMode = "stable" | "aggressive";
 export type GenerationProviderFlowKind = "one-shot" | "conversational";
 export type ProviderAvailabilityState = "available" | "auth-required" | "unavailable" | "disabled";
 export type ProviderAvailabilityTone = "positive" | "warning" | "danger" | "muted";
@@ -31,6 +32,7 @@ export interface GenerationProviderInvocation {
   jobId: string;
   request: GenerationRequest;
   referenceAssets: AssetItem[];
+  concurrencyMode: GenerationConcurrencyMode;
 }
 
 export interface GenerationProviderRunOptions {

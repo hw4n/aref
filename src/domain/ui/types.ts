@@ -3,7 +3,11 @@ import type {
   GenerationImageQuality,
   GenerationModeration,
 } from "@/domain/jobs/types";
-import type { ProviderAuthMethod, ProviderFamilyId } from "@/domain/providers/types";
+import type {
+  GenerationConcurrencyMode,
+  ProviderAuthMethod,
+  ProviderFamilyId,
+} from "@/domain/providers/types";
 import type { ID } from "@/domain/shared/types";
 
 export interface GenerationSheetDraft {
@@ -43,6 +47,7 @@ export interface AppUiPreferences {
   developerMode: boolean;
   logsVisible: boolean;
   mockProviderEnabled: boolean;
+  generationConcurrencyMode: GenerationConcurrencyMode;
   providerAuthMethods: Partial<Record<ProviderFamilyId, ProviderAuthMethod>>;
 }
 

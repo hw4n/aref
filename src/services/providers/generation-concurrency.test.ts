@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { GenerationImageSize } from "@/domain/jobs/types";
-import type { GenerationProviderInvocation } from "@/domain/providers/types";
+import type { GenerationConcurrencyMode, GenerationProviderInvocation } from "@/domain/providers/types";
 
 import {
   getGenerationConcurrencyPlan,
@@ -9,7 +9,12 @@ import {
   WeightedSemaphore,
 } from "./generation-concurrency";
 
-function invocation(provider: string, size: GenerationImageSize, referenceCount: number): GenerationProviderInvocation {
+function invocation(
+  provider: string,
+  size: GenerationImageSize,
+  referenceCount: number,
+  concurrencyMode: GenerationConcurrencyMode = "stable",
+): GenerationProviderInvocation {
   return {
     jobId: `job-${provider}`,
     request: {
@@ -43,6 +48,7 @@ function invocation(provider: string, size: GenerationImageSize, referenceCount:
       createdAt: "2026-05-13T00:00:00.000Z",
       updatedAt: "2026-05-13T00:00:00.000Z",
     })),
+    concurrencyMode,
   };
 }
 
@@ -56,6 +62,23 @@ describe("generation concurrency", () => {
     expect(getGenerationConcurrencyPlan(invocation("ima2-sidecar", "3840x2160", 0))).toMatchObject({
       capacity: 2,
       permits: 2,
+      isHeavy: true,
+    });
+  });
+
+  it("uses higher one-permit concurrency for aggressive generation mode", () => {
+    expect(
+      getGenerationConcurrencyPlan(invocation("openai", "3840x2160", 0, "aggressive")),
+    ).toMatchObject({
+      capacity: 8,
+      permits: 1,
+      isHeavy: true,
+    });
+    expect(
+      getGenerationConcurrencyPlan(invocation("ima2-sidecar", "3840x2160", 0, "aggressive")),
+    ).toMatchObject({
+      capacity: 4,
+      permits: 1,
       isHeavy: true,
     });
   });

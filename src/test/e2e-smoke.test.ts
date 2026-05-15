@@ -50,6 +50,7 @@ describe("release smoke flow", () => {
         jobId,
         request,
         referenceAssets: importedIds.map((assetId) => store.getState().project.assets[assetId]!),
+        concurrencyMode: "stable",
       },
       {
         signal: new AbortController().signal,

@@ -19,6 +19,7 @@ const baseInvocation: GenerationProviderInvocation = {
     },
   },
   referenceAssets: [],
+  concurrencyMode: "stable",
 };
 
 describe("mock generation provider", () => {

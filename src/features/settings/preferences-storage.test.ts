@@ -21,6 +21,7 @@ describe("preferences storage", () => {
       {
         ...getDefaultAppUiPreferences(),
         developerMode: true,
+        generationConcurrencyMode: "aggressive",
         providerAuthMethods: {
           openai: "api-key",
         },
@@ -30,6 +31,7 @@ describe("preferences storage", () => {
 
     const loaded = loadAppUiPreferences(storage);
     expect(loaded.providerAuthMethods.openai).toBe("api-key");
+    expect(loaded.generationConcurrencyMode).toBe("aggressive");
   });
 
   it("normalizes log visibility when developer mode is off", () => {
@@ -49,5 +51,13 @@ describe("preferences storage", () => {
 
     expect(normalized.inspectorWidth).toBe(412);
     expect(normalized.generationSheetWidth).toBe(getDefaultAppUiPreferences().generationSheetWidth);
+  });
+
+  it("falls back to stable generation concurrency for invalid values", () => {
+    const normalized = normalizeAppUiPreferences({
+      generationConcurrencyMode: "turbo" as never,
+    });
+
+    expect(normalized.generationConcurrencyMode).toBe("stable");
   });
 });

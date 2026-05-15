@@ -95,6 +95,7 @@ export function LeftSidebar({
   const setDeveloperMode = useAppStore((state) => state.setDeveloperMode);
   const setLogsVisible = useAppStore((state) => state.setLogsVisible);
   const setMockProviderEnabled = useAppStore((state) => state.setMockProviderEnabled);
+  const setGenerationConcurrencyMode = useAppStore((state) => state.setGenerationConcurrencyMode);
   const appendDiagnosticLog = useAppStore((state) => state.appendDiagnosticLog);
   const clearDiagnosticLogs = useAppStore((state) => state.clearDiagnosticLogs);
   const pushToast = useAppStore((state) => state.pushToast);
@@ -502,6 +503,21 @@ export function LeftSidebar({
     });
   };
 
+  const handleAggressiveConcurrencyToggle = (enabled: boolean) => {
+    setGenerationConcurrencyMode(enabled ? "aggressive" : "stable");
+    appendDiagnosticLog({
+      level: enabled ? "warning" : "info",
+      scope: "generation",
+      title: "Generation concurrency changed",
+      message: enabled
+        ? "Aggressive generation concurrency enabled."
+        : "Stable generation concurrency restored.",
+      details: enabled
+        ? "Large or ref-heavy jobs can now run in parallel and may hit provider rate limits sooner."
+        : "Large or ref-heavy jobs reserve extra capacity again.",
+    });
+  };
+
   return (
     <aside className="left-sidebar left-sidebar--settings">
       <header className="inspector-panel__tabs settings-panel__tabs" aria-label="Settings sections">
@@ -770,6 +786,22 @@ export function LeftSidebar({
                     disabled={!uiPreferences.developerMode}
                     type="checkbox"
                     onChange={(event) => handleMockProviderToggle(event.currentTarget.checked)}
+                  />
+                </label>
+
+                <label className="toggle-row">
+                  <span>
+                    <strong>Aggressive Generation Concurrency</strong>
+                    <em>
+                      Run more OpenAI and ChatGPT OAuth jobs in parallel, including 4K or
+                      ref-heavy jobs.
+                    </em>
+                  </span>
+                  <input
+                    checked={uiPreferences.generationConcurrencyMode === "aggressive"}
+                    disabled={!uiPreferences.developerMode}
+                    type="checkbox"
+                    onChange={(event) => handleAggressiveConcurrencyToggle(event.currentTarget.checked)}
                   />
                 </label>
 

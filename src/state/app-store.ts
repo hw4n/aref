@@ -39,10 +39,14 @@ import {
   syncGroupsWithAssets,
   ungroupSelection,
 } from "@/domain/groups/group-utils";
-import type { GenerationProviderResult } from "@/domain/providers/types";
+import type {
+  GenerationConcurrencyMode,
+  GenerationProviderResult,
+  ProviderAuthMethod,
+  ProviderFamilyId,
+} from "@/domain/providers/types";
 import { createEmptyProject } from "@/domain/project/sample-project";
 import type { Project } from "@/domain/project/types";
-import type { ProviderAuthMethod, ProviderFamilyId } from "@/domain/providers/types";
 import type { Point } from "@/domain/shared/types";
 import type { ToastKind, ToastMessage } from "@/domain/toasts/types";
 import type {
@@ -125,6 +129,7 @@ export interface AppStoreState {
   setDeveloperMode: (enabled: boolean) => void;
   setLogsVisible: (visible: boolean) => void;
   setMockProviderEnabled: (enabled: boolean) => void;
+  setGenerationConcurrencyMode: (mode: GenerationConcurrencyMode) => void;
   setProviderAuthMethod: (providerFamily: ProviderFamilyId, authMethod: ProviderAuthMethod) => void;
   toggleSelectedLocked: () => void;
   hideSelected: () => void;
@@ -951,6 +956,9 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
           ...state.uiPreferences,
           developerMode: enabled,
           logsVisible: enabled ? state.uiPreferences.logsVisible : false,
+          generationConcurrencyMode: enabled
+            ? state.uiPreferences.generationConcurrencyMode
+            : "stable",
         },
       }));
     },
@@ -967,6 +975,14 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
         uiPreferences: {
           ...state.uiPreferences,
           mockProviderEnabled: enabled,
+        },
+      }));
+    },
+    setGenerationConcurrencyMode: (mode) => {
+      set((state) => ({
+        uiPreferences: {
+          ...state.uiPreferences,
+          generationConcurrencyMode: mode,
         },
       }));
     },

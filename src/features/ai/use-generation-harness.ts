@@ -31,6 +31,9 @@ export function useGenerationHarness(options: UseGenerationHarnessOptions = {}) 
   const failGenerationJob = useAppStore((state) => state.failGenerationJob);
   const appendDiagnosticLog = useAppStore((state) => state.appendDiagnosticLog);
   const pushToast = useAppStore((state) => state.pushToast);
+  const generationConcurrencyMode = useAppStore(
+    (state) => state.uiPreferences.generationConcurrencyMode,
+  );
   const queueGenerationJob = useAppStore((state) => state.queueGenerationJob);
   const runGenerationJob = useAppStore((state) => state.runGenerationJob);
 
@@ -100,6 +103,7 @@ export function useGenerationHarness(options: UseGenerationHarnessOptions = {}) 
           jobId,
           request: imageRequest,
           referenceAssets,
+          concurrencyMode: generationConcurrencyMode,
         };
         const concurrencyPlan = getGenerationConcurrencyPlan(invocation);
         appendDiagnosticLog({
@@ -107,7 +111,12 @@ export function useGenerationHarness(options: UseGenerationHarnessOptions = {}) 
           scope: "generation",
           title: "Generation scheduled",
           message: `${provider.label} is using ${concurrencyPlan.permits}/${concurrencyPlan.capacity} generation slots.`,
-          details: concurrencyPlan.isHeavy ? "Large or ref-heavy jobs reserve extra capacity." : null,
+          details:
+            generationConcurrencyMode === "aggressive"
+              ? "Aggressive concurrency is enabled; heavy jobs do not reserve extra capacity."
+              : concurrencyPlan.isHeavy
+                ? "Large or ref-heavy jobs reserve extra capacity."
+                : null,
         });
 
         const result = await runGenerationWithConcurrency(

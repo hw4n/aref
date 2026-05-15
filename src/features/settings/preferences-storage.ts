@@ -22,6 +22,7 @@ export function getDefaultAppUiPreferences(): AppUiPreferences {
     developerMode: false,
     logsVisible: false,
     mockProviderEnabled: false,
+    generationConcurrencyMode: "stable",
     providerAuthMethods: {
       openai: "oauth",
     },
@@ -49,6 +50,14 @@ export function normalizeAppUiPreferences(input: Partial<AppUiPreferences> | nul
       ? (nextPreferences.logsVisible ?? defaults.logsVisible)
       : false,
     mockProviderEnabled: nextPreferences.mockProviderEnabled ?? defaults.mockProviderEnabled,
+    generationConcurrencyMode:
+      nextPreferences.developerMode
+      && (
+        nextPreferences.generationConcurrencyMode === "aggressive"
+        || nextPreferences.generationConcurrencyMode === "stable"
+      )
+        ? nextPreferences.generationConcurrencyMode
+        : defaults.generationConcurrencyMode,
     providerAuthMethods: {
       openai:
         nextPreferences.providerAuthMethods?.openai === "api-key"
