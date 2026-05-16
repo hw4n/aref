@@ -96,6 +96,12 @@ interface DragSession {
   generationJobStartPositions: Record<string, Point>;
 }
 
+interface MarqueeSession {
+  additive: boolean;
+  originWorld: Point;
+  originScreen: Point;
+}
+
 interface CanvasStageProps {
   onCancelGeneration?: (jobId: string) => void;
 }
@@ -857,11 +863,7 @@ function CanvasStageComponent({ onCancelGeneration }: CanvasStageProps = {}) {
   const [stableRenderAssetIds, setStableRenderAssetIds] = useState<string[]>([]);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [selectedGenerationJobIds, setSelectedGenerationJobIds] = useState<string[]>([]);
-  const [marqueeSession, setMarqueeSession] = useState<{
-    additive: boolean;
-    originWorld: Point;
-    originScreen: Point;
-  } | null>(null);
+  const [marqueeSession, setMarqueeSession] = useState<MarqueeSession | null>(null);
 
   const stageRef = useRef<Konva.Stage | null>(null);
   const transformerRef = useRef<Konva.Transformer | null>(null);
@@ -886,6 +888,7 @@ function CanvasStageComponent({ onCancelGeneration }: CanvasStageProps = {}) {
   const panCameraAnimationFrameRef = useRef<number | null>(null);
   const pendingMarqueeRef = useRef<CanvasRect | null>(null);
   const marqueeAnimationFrameRef = useRef<number | null>(null);
+  const marqueeSessionRef = useRef<MarqueeSession | null>(null);
   const size = useStageContainerSize(panelElement);
 
   const camera = useAppStore((state) => state.project.camera);
@@ -1016,6 +1019,11 @@ function CanvasStageComponent({ onCancelGeneration }: CanvasStageProps = {}) {
     },
     [setCanvasInteractionActive, setRenderInteractive],
   );
+
+  const setActiveMarqueeSession = useCallback((session: MarqueeSession | null) => {
+    marqueeSessionRef.current = session;
+    setMarqueeSession(session);
+  }, []);
 
   const clearCanvasSelection = useCallback(() => {
     clearSelection();
@@ -1331,10 +1339,16 @@ function CanvasStageComponent({ onCancelGeneration }: CanvasStageProps = {}) {
   }, [editingTextAsset, editingTextAssetId, finishTextEditing]);
 
   useEffect(() => {
-    if (size.width > 0 && size.height > 0) {
-      setViewportSize(size.width, size.height);
+    if (size.width <= 0 || size.height <= 0) {
+      return;
     }
-  }, [setViewportSize, size.height, size.width]);
+
+    if (camera.viewportWidth === size.width && camera.viewportHeight === size.height) {
+      return;
+    }
+
+    setViewportSize(size.width, size.height);
+  }, [camera.viewportHeight, camera.viewportWidth, setViewportSize, size.height, size.width]);
 
   useEffect(() => {
     setStableRenderAssetIds((currentIds) => {
@@ -1866,24 +1880,26 @@ function CanvasStageComponent({ onCancelGeneration }: CanvasStageProps = {}) {
   };
 
   const finalizeMarquee = (pointer: Point | null) => {
-    if (!marqueeSession) {
+    const activeMarqueeSession = marqueeSessionRef.current;
+
+    if (!activeMarqueeSession) {
       return;
     }
 
-    const width = pointer ? Math.abs(pointer.x - marqueeSession.originScreen.x) : 0;
-    const height = pointer ? Math.abs(pointer.y - marqueeSession.originScreen.y) : 0;
+    const width = pointer ? Math.abs(pointer.x - activeMarqueeSession.originScreen.x) : 0;
+    const height = pointer ? Math.abs(pointer.y - activeMarqueeSession.originScreen.y) : 0;
     const finalMarquee = pointer
-      ? normalizeRect(marqueeSession.originWorld, screenToWorld(camera, pointer))
+      ? normalizeRect(activeMarqueeSession.originWorld, screenToWorld(camera, pointer))
       : null;
     clearPendingMarquee();
 
     if (!pointer || (width < 4 && height < 4)) {
-      if (!marqueeSession.additive) {
+      if (!activeMarqueeSession.additive) {
         clearCanvasSelection();
       }
 
       setMarquee(null);
-      setMarqueeSession(null);
+      setActiveMarqueeSession(null);
       return;
     }
 
@@ -1898,14 +1914,14 @@ function CanvasStageComponent({ onCancelGeneration }: CanvasStageProps = {}) {
           .map((job) => job.id)
       : [];
 
-    selectAssets(hits, { additive: marqueeSession.additive });
+    selectAssets(hits, { additive: activeMarqueeSession.additive });
     setSelectedGenerationJobIds((currentIds) =>
-      marqueeSession.additive
+      activeMarqueeSession.additive
         ? Array.from(new Set([...currentIds, ...generationJobHits]))
         : generationJobHits,
     );
     setMarquee(null);
-    setMarqueeSession(null);
+    setActiveMarqueeSession(null);
   };
 
   const handleAssetSelect = (assetId: string, additive: boolean) => {
@@ -2026,12 +2042,14 @@ function CanvasStageComponent({ onCancelGeneration }: CanvasStageProps = {}) {
 
               if (clickedEmptyCanvas && event.evt.button === 0) {
                 const originWorld = screenToWorld(camera, pointer);
-                setCanvasInteractionPreviewActive(true);
-                setMarqueeSession({
+                const nextMarqueeSession = {
                   additive: isAdditiveSelectionModifier(event.evt),
                   originWorld,
                   originScreen: pointer,
-                });
+                };
+
+                setCanvasInteractionPreviewActive(true);
+                setActiveMarqueeSession(nextMarqueeSession);
                 setMarquee({
                   x: originWorld.x,
                   y: originWorld.y,
@@ -2055,9 +2073,11 @@ function CanvasStageComponent({ onCancelGeneration }: CanvasStageProps = {}) {
                 return;
               }
 
-              if (marqueeSession) {
+              const activeMarqueeSession = marqueeSessionRef.current;
+
+              if (activeMarqueeSession) {
                 const worldPointer = screenToWorld(camera, pointer);
-                scheduleMarquee(normalizeRect(marqueeSession.originWorld, worldPointer));
+                scheduleMarquee(normalizeRect(activeMarqueeSession.originWorld, worldPointer));
               }
             }}
             onMouseUp={(event) => {
@@ -2084,8 +2104,15 @@ function CanvasStageComponent({ onCancelGeneration }: CanvasStageProps = {}) {
             }}
             onMouseLeave={() => {
               const panSession = panSessionRef.current;
+              const hadMarqueeSession = Boolean(marqueeSessionRef.current);
               flushPendingPanCameraPosition();
-              flushPendingMarquee();
+              if (hadMarqueeSession) {
+                clearPendingMarquee();
+                setMarquee(null);
+                setActiveMarqueeSession(null);
+              } else {
+                flushPendingMarquee();
+              }
               panSessionRef.current = null;
               setIsPanning(false);
               if (panSession) {
