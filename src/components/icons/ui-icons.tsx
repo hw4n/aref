@@ -517,6 +517,21 @@ export function GridIcon(props: IconProps) {
   );
 }
 
+export function ArrangeIcon(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <rect x="4" y="5" width="6" height="5" rx="1" />
+      <rect x="14" y="5" width="6" height="5" rx="1" />
+      <rect x="4" y="14" width="6" height="5" rx="1" />
+      <rect x="14" y="14" width="6" height="5" rx="1" />
+      <path d="M10 7.5h4" />
+      <path d="M10 16.5h4" />
+      <path d="M7 10v4" />
+      <path d="M17 10v4" />
+    </IconBase>
+  );
+}
+
 export function PanelLeftIcon(props: IconProps) {
   return (
     <IconBase {...props}>

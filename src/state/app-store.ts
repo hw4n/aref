@@ -7,6 +7,7 @@ import {
   sendSelectionBackward,
   sendSelectionToBack,
 } from "@/domain/assets/asset-order";
+import { arrangeAssetsWithoutOverlap } from "@/domain/assets/asset-arrangement";
 import { createGeneratedAssets } from "@/domain/assets/generated-asset-utils";
 import { createImportedAssets, type ImportedImageDraft } from "@/domain/assets/imported-asset-utils";
 import { getAssetsBounds } from "@/domain/assets/asset-geometry";
@@ -158,6 +159,7 @@ export interface AppStoreState {
   sendSelectionBackward: () => void;
   bringSelectionToFront: () => void;
   sendSelectionToBack: () => void;
+  arrangeSelectionWithoutOverlap: () => void;
   groupSelection: () => void;
   ungroupSelection: () => void;
   duplicateSelection: () => void;
@@ -1387,6 +1389,54 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
         );
 
         if (nextAssets === state.project.assets) {
+          return state;
+        }
+
+        return pushProjectHistory(state, {
+          project: bumpProject({
+            ...state.project,
+            assets: nextAssets,
+          }),
+        });
+      });
+    },
+    arrangeSelectionWithoutOverlap: () => {
+      set((state) => {
+        const selectedAssets = state.project.selection.assetIds
+          .map((assetId) => state.project.assets[assetId])
+          .filter((asset): asset is AssetItem => Boolean(asset) && !asset.locked);
+
+        if (selectedAssets.length < 2) {
+          return state;
+        }
+
+        const updates = arrangeAssetsWithoutOverlap(selectedAssets);
+
+        if (updates.length === 0) {
+          return state;
+        }
+
+        const timestamp = new Date().toISOString();
+        let didChange = false;
+        const nextAssets = { ...state.project.assets };
+
+        for (const update of updates) {
+          const asset = nextAssets[update.id];
+
+          if (!asset || asset.locked || (asset.x === update.position.x && asset.y === update.position.y)) {
+            continue;
+          }
+
+          nextAssets[update.id] = {
+            ...asset,
+            x: update.position.x,
+            y: update.position.y,
+            updatedAt: timestamp,
+          };
+          didChange = true;
+        }
+
+        if (!didChange) {
           return state;
         }
 

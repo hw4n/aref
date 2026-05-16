@@ -1,4 +1,5 @@
 import {
+  ArrangeIcon,
   CenterSelectionIcon,
   FitSelectionIcon,
   FrameAllIcon,
@@ -13,7 +14,14 @@ export function ToolbarRail() {
   const frameAll = useAppStore((state) => state.frameAll);
   const frameSelection = useAppStore((state) => state.frameSelection);
   const centerSelection = useAppStore((state) => state.centerSelection);
+  const arrangeSelectionWithoutOverlap = useAppStore((state) => state.arrangeSelectionWithoutOverlap);
   const selectionCount = useAppStore((state) => state.project.selection.assetIds.length);
+  const movableSelectionCount = useAppStore((state) =>
+    state.project.selection.assetIds.filter((assetId) => {
+      const asset = state.project.assets[assetId];
+      return Boolean(asset) && !asset.locked;
+    }).length,
+  );
   const imageSelectionCount = useAppStore((state) =>
     state.project.selection.assetIds.filter((assetId) => {
       const asset = state.project.assets[assetId];
@@ -69,6 +77,13 @@ export function ToolbarRail() {
       icon: <FitSelectionIcon size={18} />,
       onClick: frameSelection,
       disabled: selectionCount === 0,
+      active: false,
+    },
+    {
+      label: "Tidy Selection",
+      icon: <ArrangeIcon size={18} />,
+      onClick: arrangeSelectionWithoutOverlap,
+      disabled: movableSelectionCount < 2,
       active: false,
     },
     {

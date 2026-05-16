@@ -3,6 +3,7 @@ import Konva from "konva";
 import { Circle, Group, Image as KonvaImage, Layer, Rect, Stage, Text, Transformer } from "react-konva";
 
 import {
+  ArrangeIcon,
   CancelIcon,
   EyeIcon,
   EyeOffIcon,
@@ -28,6 +29,7 @@ import {
 } from "@/domain/jobs/generation-layout";
 import type { GenerationJob } from "@/domain/jobs/types";
 import { normalizeRect, rectsIntersect } from "@/domain/shared/geometry";
+import { arrangeRectsWithoutOverlap } from "@/domain/shared/rect-arrangement";
 import type { Point, Rect as CanvasRect } from "@/domain/shared/types";
 import { useCanvasShortcuts } from "@/features/canvas/hooks/use-canvas-shortcuts";
 import { useStageContainerSize } from "@/features/canvas/hooks/use-stage-container-size";
@@ -1165,6 +1167,13 @@ export function CanvasStage({ onCancelGeneration }: CanvasStageProps = {}) {
       : "canvas-surface";
   const canHideSelected = selectedAssetIds.some((assetId) => !assetMap[assetId]?.hidden);
   const canUnhideSelected = hiddenSelectedCount > 0;
+  const selectedCanvasItemCount = selectedAssetIds.length + selectedGenerationJobIds.length;
+  const movableSelectedCanvasItemCount =
+    selectedAssetIds.filter((assetId) => {
+      const asset = assetMap[assetId];
+      return Boolean(asset) && !asset.locked;
+    }).length
+    + selectedGenerationJobIds.filter((jobId) => Boolean(generationJobMap[jobId])).length;
   const rotationSnaps = useMemo(
     () => getRotationSnapAngles(isRotationSnapModifierPressed),
     [isRotationSnapModifierPressed],
@@ -1172,9 +1181,71 @@ export function CanvasStage({ onCancelGeneration }: CanvasStageProps = {}) {
   const clampedContextMenuPosition = contextMenu
     ? {
         left: Math.max(12, Math.min(contextMenu.x, size.width - 220)),
-        top: Math.max(12, Math.min(contextMenu.y, size.height - 260)),
+        top: Math.max(12, Math.min(contextMenu.y, size.height - 300)),
       }
     : null;
+
+  const arrangeSelectedCanvasItemsWithoutOverlap = useCallback(() => {
+    type CanvasArrangementId = {
+      kind: "asset" | "generation-job";
+      id: string;
+    };
+
+    const items: Array<{ id: CanvasArrangementId; bounds: CanvasRect; anchor: Point }> = [];
+
+    for (const assetId of selectedAssetIds) {
+      const asset = assetMap[assetId];
+
+      if (!asset || asset.locked) {
+        continue;
+      }
+
+      const bounds = getAssetBounds(asset);
+      items.push({
+        id: { kind: "asset", id: asset.id },
+        bounds,
+        anchor: {
+          x: asset.x - bounds.x,
+          y: asset.y - bounds.y,
+        },
+      });
+    }
+
+    for (const jobId of selectedGenerationJobIds) {
+      const job = generationJobMap[jobId];
+
+      if (!job) {
+        continue;
+      }
+
+      const bounds = getGenerationJobBounds(job);
+      items.push({
+        id: { kind: "generation-job", id: job.id },
+        bounds,
+        anchor: {
+          x: job.canvasPlacement.x - bounds.x,
+          y: job.canvasPlacement.y - bounds.y,
+        },
+      });
+    }
+
+    if (items.length < 2) {
+      return;
+    }
+
+    const updates = arrangeRectsWithoutOverlap(items);
+    const assetPositions = updates
+      .filter((update) => update.id.kind === "asset")
+      .map((update) => ({ id: update.id.id, position: update.position }));
+    const generationJobPlacements = updates
+      .filter((update) => update.id.kind === "generation-job")
+      .map((update) => ({ id: update.id.id, position: update.position }));
+
+    setCanvasItemPositions({
+      assetPositions,
+      generationJobPlacements,
+    });
+  }, [assetMap, generationJobMap, selectedAssetIds, selectedGenerationJobIds, setCanvasItemPositions]);
 
   useEffect(() => {
     selectedAssetIdsRef.current = selectedAssetIds;
@@ -2073,6 +2144,17 @@ export function CanvasStage({ onCancelGeneration }: CanvasStageProps = {}) {
                 <span>Fit Selection</span>
               </button>
             </>
+          ) : null}
+
+          {selectedCanvasItemCount > 0 ? (
+            <button
+              className="canvas-context-menu__item"
+              disabled={movableSelectedCanvasItemCount < 2}
+              onClick={() => runContextMenuAction(arrangeSelectedCanvasItemsWithoutOverlap)}
+            >
+              <ArrangeIcon size={14} />
+              <span>Tidy Selection</span>
+            </button>
           ) : null}
 
           {hiddenAssetCount > 0 ? (

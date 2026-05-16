@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { getAssetBounds } from "@/domain/assets/asset-geometry";
 import { getGenerationRequestPlaceholderBounds } from "@/domain/jobs/generation-layout";
 import type { GenerationRequest } from "@/domain/jobs/types";
 import { createSampleProject } from "@/domain/project/sample-project";
@@ -493,6 +494,32 @@ describe("app store", () => {
       x: 720,
       y: 360,
     });
+  });
+
+  it("rearranges a multi-selection so selected assets do not overlap", () => {
+    const store = createSeededStore();
+    const selectedIds = ["asset-forest", "asset-portrait", "asset-architecture"];
+
+    store.getState().setAssetPositions(selectedIds.map((id) => ({ id, position: { x: 0, y: 0 } })));
+    store.getState().selectAssets(selectedIds);
+
+    const beforeAssets = selectedIds.map((id) => store.getState().project.assets[id]!);
+    expect(rectsIntersect(getAssetBounds(beforeAssets[0]!), getAssetBounds(beforeAssets[1]!))).toBe(true);
+
+    store.getState().arrangeSelectionWithoutOverlap();
+
+    const arrangedAssets = selectedIds.map((id) => store.getState().project.assets[id]!);
+    for (let index = 0; index < arrangedAssets.length; index += 1) {
+      for (let otherIndex = index + 1; otherIndex < arrangedAssets.length; otherIndex += 1) {
+        expect(
+          rectsIntersect(
+            getAssetBounds(arrangedAssets[index]!),
+            getAssetBounds(arrangedAssets[otherIndex]!),
+          ),
+        ).toBe(false);
+      }
+    }
+    expect(store.getState().project.selection.assetIds).toEqual(selectedIds);
   });
 
   it("removes generation jobs from the project job list", () => {

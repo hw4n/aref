@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import {
+  ArrangeIcon,
   CancelIcon,
   EyeIcon,
   EyeOffIcon,
@@ -110,11 +111,13 @@ export function ContextualGenerationSheet({
   const sendSelectionBackward = useAppStore((state) => state.sendSelectionBackward);
   const sendSelectionToBack = useAppStore((state) => state.sendSelectionToBack);
   const toggleSelectedLocked = useAppStore((state) => state.toggleSelectedLocked);
+  const arrangeSelectionWithoutOverlap = useAppStore((state) => state.arrangeSelectionWithoutOverlap);
   const setGenerationDraft = useAppStore((state) => state.setGenerationDraft);
   const ungroupSelection = useAppStore((state) => state.ungroupSelection);
   const unhideSelected = useAppStore((state) => state.unhideSelected);
 
   const hiddenSelectionCount = referenceAssets.filter((asset) => asset.hidden).length;
+  const movableSelectionCount = selectedAssets.filter((asset) => !asset.locked).length;
   const hasReferences = referenceAssets.length > 0;
   const firstReferenceAsset = referenceAssets[0] ?? null;
   const allSelectedLocked = selectedAssets.length > 0 && selectedAssets.every((asset) => asset.locked);
@@ -250,6 +253,15 @@ export function ContextualGenerationSheet({
               >
                 <CancelIcon size={14} />
                 <span>Ungroup</span>
+              </button>
+              <button
+                className="inspector-panel__selection-action"
+                disabled={movableSelectionCount < 2}
+                onClick={arrangeSelectionWithoutOverlap}
+                title={movableSelectionCount >= 2 ? "Rearrange selected items without overlap" : "Select at least two unlocked items"}
+              >
+                <ArrangeIcon size={14} />
+                <span>Tidy</span>
               </button>
               <button className="inspector-panel__selection-action" onClick={frameSelection}>
                 <SizeIcon size={14} />
