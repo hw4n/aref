@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import {
+  Suspense,
+  lazy,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 
 import {
   FullscreenIcon,
@@ -12,14 +21,9 @@ import {
   SaveIcon,
   SourceIcon,
 } from "@/components/icons/ui-icons";
-import { DeveloperLogDrawer } from "@/components/layout/DeveloperLogDrawer";
-import { InspectorPanel } from "@/components/layout/InspectorPanel";
-import { LeftSidebar } from "@/components/layout/LeftSidebar";
-import { PhotoViewerDialog } from "@/components/layout/PhotoViewerDialog";
 import { ToastViewport } from "@/components/layout/ToastViewport";
 import { ToolbarRail } from "@/components/layout/ToolbarRail";
 import { isImageAsset } from "@/domain/assets/types";
-import { ContextualGenerationSheet } from "@/features/ai/components/ContextualGenerationSheet";
 import { shouldShowContextualGenerationSheet } from "@/features/ai/contextual-sheet";
 import { useGenerationHarness } from "@/features/ai/use-generation-harness";
 import { loadImageFiles, loadImagePaths } from "@/features/import/utils/load-image-files";
@@ -32,11 +36,41 @@ import { useProjectPersistence } from "@/features/project/persistence/use-projec
 import { getProjectDisplayName } from "@/features/project/persistence/project-title";
 import { useWindowImageDrop } from "@/features/import/hooks/use-window-image-drop";
 import { useWindowImagePaste } from "@/features/import/hooks/use-window-image-paste";
-import { CanvasStage } from "@/features/canvas/adapters/react-konva/CanvasStage";
 import { useProviderManagement } from "@/features/providers/use-provider-management";
 import { useGenerationDraftPersistence } from "@/features/settings/use-generation-draft-persistence";
 import { useUiPreferencesPersistence } from "@/features/settings/use-ui-preferences-persistence";
 import { useAppStore } from "@/state/app-store";
+
+const CanvasStage = lazy(() =>
+  import("@/features/canvas/adapters/react-konva/CanvasStage").then((module) => ({
+    default: module.CanvasStage,
+  })),
+);
+const ContextualGenerationSheet = lazy(() =>
+  import("@/features/ai/components/ContextualGenerationSheet").then((module) => ({
+    default: module.ContextualGenerationSheet,
+  })),
+);
+const DeveloperLogDrawer = lazy(() =>
+  import("@/components/layout/DeveloperLogDrawer").then((module) => ({
+    default: module.DeveloperLogDrawer,
+  })),
+);
+const InspectorPanel = lazy(() =>
+  import("@/components/layout/InspectorPanel").then((module) => ({
+    default: module.InspectorPanel,
+  })),
+);
+const LeftSidebar = lazy(() =>
+  import("@/components/layout/LeftSidebar").then((module) => ({
+    default: module.LeftSidebar,
+  })),
+);
+const PhotoViewerDialog = lazy(() =>
+  import("@/components/layout/PhotoViewerDialog").then((module) => ({
+    default: module.PhotoViewerDialog,
+  })),
+);
 
 function isTypingTarget(target: EventTarget | null) {
   if (!(target instanceof HTMLElement)) {
@@ -778,23 +812,25 @@ export function AppShell() {
         </div>
       ) : null}
       {photoViewerAsset ? (
-        <PhotoViewerDialog
-          asset={photoViewerAsset}
-          assets={photoAssets}
-          currentIndex={photoViewerIndex}
-          totalCount={photoAssets.length}
-          hasPrevious={photoViewerIndex > 0}
-          hasNext={photoViewerIndex >= 0 && photoViewerIndex < photoAssets.length - 1}
-          canExport={isDesktopPersistenceAvailable}
-          isExporting={isPhotoExporting}
-          selectedAssetIds={selectedPhotoAssetIds}
-          onClose={() => setPhotoViewerAssetId(null)}
-          onExportSelected={() => void exportSelectedPhotos()}
-          onNext={showNextPhoto}
-          onSelectIndex={selectPhotoByIndex}
-          onPrevious={showPreviousPhoto}
-          onToggleSelection={togglePhotoSelection}
-        />
+        <Suspense fallback={null}>
+          <PhotoViewerDialog
+            asset={photoViewerAsset}
+            assets={photoAssets}
+            currentIndex={photoViewerIndex}
+            totalCount={photoAssets.length}
+            hasPrevious={photoViewerIndex > 0}
+            hasNext={photoViewerIndex >= 0 && photoViewerIndex < photoAssets.length - 1}
+            canExport={isDesktopPersistenceAvailable}
+            isExporting={isPhotoExporting}
+            selectedAssetIds={selectedPhotoAssetIds}
+            onClose={() => setPhotoViewerAssetId(null)}
+            onExportSelected={() => void exportSelectedPhotos()}
+            onNext={showNextPhoto}
+            onSelectIndex={selectPhotoByIndex}
+            onPrevious={showPreviousPhoto}
+            onToggleSelection={togglePhotoSelection}
+          />
+        </Suspense>
       ) : null}
       <main className={workspaceClassName}>
         <header className="workspace__header">
@@ -862,7 +898,9 @@ export function AppShell() {
                 <strong>Drop images to import</strong>
               </div>
             ) : null}
-            <CanvasStage onCancelGeneration={cancelGeneration} />
+            <Suspense fallback={<div className="canvas-loading" aria-label="Loading canvas" />}>
+              <CanvasStage onCancelGeneration={cancelGeneration} />
+            </Suspense>
           </div>
           {settingsOpen ? (
             <div
@@ -870,28 +908,30 @@ export function AppShell() {
               className={`workspace__left-pane ${leftRailOpen ? "" : "workspace__left-pane--rail-hidden"}`}
               style={{ width: LEFT_PANEL_WIDTH }}
             >
-              <LeftSidebar
-                providerEntries={providerManagement.providerEntries}
-                openAiAuthMethod={providerManagement.openAiAuthMethod}
-                openAiAvailabilityByMethod={providerManagement.openAiAvailabilityByMethod}
-                openAiSettings={providerManagement.openAiSettings}
-                openAiSettingsStatus={providerManagement.openAiSettingsStatus}
-                openAiSettingsError={providerManagement.openAiSettingsError}
-                isDesktopOpenAiAvailable={providerManagement.isDesktopOpenAiAvailable}
-                saveOpenAiSettings={providerManagement.saveOpenAiSettings}
-                clearOpenAiSettings={providerManagement.clearOpenAiSettings}
-                ima2SidecarSettings={providerManagement.ima2SidecarSettings}
-                ima2SidecarSettingsStatus={providerManagement.ima2SidecarSettingsStatus}
-                ima2SidecarSettingsError={providerManagement.ima2SidecarSettingsError}
-                isDesktopIma2SidecarAvailable={providerManagement.isDesktopIma2SidecarAvailable}
-                saveIma2SidecarSettings={providerManagement.saveIma2SidecarSettings}
-                clearIma2SidecarSettings={providerManagement.clearIma2SidecarSettings}
-                reloadIma2SidecarSettings={providerManagement.reloadIma2SidecarSettings}
-                startIma2SidecarProxy={providerManagement.startIma2SidecarProxy}
-                startIma2SidecarLogin={providerManagement.startIma2SidecarLogin}
-                selectProviderFamily={providerManagement.selectProviderFamily}
-                setOpenAiAuthMethod={providerManagement.setOpenAiAuthMethod}
-              />
+              <Suspense fallback={null}>
+                <LeftSidebar
+                  providerEntries={providerManagement.providerEntries}
+                  openAiAuthMethod={providerManagement.openAiAuthMethod}
+                  openAiAvailabilityByMethod={providerManagement.openAiAvailabilityByMethod}
+                  openAiSettings={providerManagement.openAiSettings}
+                  openAiSettingsStatus={providerManagement.openAiSettingsStatus}
+                  openAiSettingsError={providerManagement.openAiSettingsError}
+                  isDesktopOpenAiAvailable={providerManagement.isDesktopOpenAiAvailable}
+                  saveOpenAiSettings={providerManagement.saveOpenAiSettings}
+                  clearOpenAiSettings={providerManagement.clearOpenAiSettings}
+                  ima2SidecarSettings={providerManagement.ima2SidecarSettings}
+                  ima2SidecarSettingsStatus={providerManagement.ima2SidecarSettingsStatus}
+                  ima2SidecarSettingsError={providerManagement.ima2SidecarSettingsError}
+                  isDesktopIma2SidecarAvailable={providerManagement.isDesktopIma2SidecarAvailable}
+                  saveIma2SidecarSettings={providerManagement.saveIma2SidecarSettings}
+                  clearIma2SidecarSettings={providerManagement.clearIma2SidecarSettings}
+                  reloadIma2SidecarSettings={providerManagement.reloadIma2SidecarSettings}
+                  startIma2SidecarProxy={providerManagement.startIma2SidecarProxy}
+                  startIma2SidecarLogin={providerManagement.startIma2SidecarLogin}
+                  selectProviderFamily={providerManagement.selectProviderFamily}
+                  setOpenAiAuthMethod={providerManagement.setOpenAiAuthMethod}
+                />
+              </Suspense>
             </div>
           ) : null}
           {showGenerationSheet ? (
@@ -902,10 +942,12 @@ export function AppShell() {
                 width: generationSheetWidth,
               }}
             >
-              <ContextualGenerationSheet
-                activeProvider={providerManagement.activeProvider}
-                onSubmitGeneration={submitGeneration}
-              />
+              <Suspense fallback={null}>
+                <ContextualGenerationSheet
+                  activeProvider={providerManagement.activeProvider}
+                  onSubmitGeneration={submitGeneration}
+                />
+              </Suspense>
             </div>
           ) : null}
           {inspectorOpen ? (
@@ -916,16 +958,22 @@ export function AppShell() {
               width: inspectorWidth,
             }}
           >
-              <InspectorPanel
-                recentProjects={recentProjects}
-                onOpenRecentProject={openRecentProject}
-                onCancelGeneration={cancelGeneration}
-                onRerunGeneration={rerunGeneration}
-              />
+              <Suspense fallback={null}>
+                <InspectorPanel
+                  recentProjects={recentProjects}
+                  onOpenRecentProject={openRecentProject}
+                  onCancelGeneration={cancelGeneration}
+                  onRerunGeneration={rerunGeneration}
+                />
+              </Suspense>
           </div>
           ) : null}
         </div>
-        {areLogsVisible ? <DeveloperLogDrawer activeProviderId={activeProviderId} /> : null}
+        {areLogsVisible ? (
+          <Suspense fallback={null}>
+            <DeveloperLogDrawer activeProviderId={activeProviderId} />
+          </Suspense>
+        ) : null}
       </main>
       <ToastViewport />
     </div>

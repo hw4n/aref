@@ -48,15 +48,27 @@ vi.mock("react-konva", async () => {
     }
   >((props, ref) => {
     const pointerRef = React.useRef({ x: 600, y: 400 });
+    const positionRef = React.useRef({ x: 0, y: 0 });
     const stageRef = React.useRef<{
+      batchDraw: () => void;
       getPointerPosition: () => { x: number; y: number };
       getStage: () => unknown;
+      position: (nextPosition?: { x: number; y: number }) => { x: number; y: number } | unknown;
     } | null>(null);
 
     if (!stageRef.current) {
       stageRef.current = {
+        batchDraw: () => undefined,
         getPointerPosition: () => pointerRef.current,
         getStage: () => stageRef.current,
+        position: (nextPosition?: { x: number; y: number }) => {
+          if (nextPosition) {
+            positionRef.current = nextPosition;
+            return stageRef.current;
+          }
+
+          return positionRef.current;
+        },
       };
     }
 
@@ -165,6 +177,59 @@ describe("CanvasStage", () => {
     await waitFor(() => {
       expect(appStore.getState().project.selection.assetIds).toEqual([]);
       expect(appStore.getState().project.selection.marquee).toBeNull();
+    });
+  });
+
+  it("keeps pan movement out of the store until the pan ends", async () => {
+    appStore.getState().replaceProject({
+      ...createEmptyProject(),
+      camera: {
+        ...createInitialCamera(),
+        x: 0,
+        y: 0,
+        viewportWidth: 1200,
+        viewportHeight: 800,
+      },
+    });
+
+    render(<CanvasStage />);
+
+    const stage = screen.getByTestId("mock-stage");
+
+    act(() => {
+      stage.dispatchEvent(new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 1,
+        clientX: 600,
+        clientY: 400,
+      }));
+      stage.dispatchEvent(new MouseEvent("mousemove", {
+        bubbles: true,
+        button: 1,
+        clientX: 720,
+        clientY: 455,
+      }));
+    });
+
+    await act(async () => {
+      await new Promise((resolve) => window.requestAnimationFrame(resolve));
+    });
+
+    expect(appStore.getState().project.camera.x).toBe(0);
+    expect(appStore.getState().project.camera.y).toBe(0);
+
+    act(() => {
+      stage.dispatchEvent(new MouseEvent("mouseup", {
+        bubbles: true,
+        button: 1,
+        clientX: 720,
+        clientY: 455,
+      }));
+    });
+
+    await waitFor(() => {
+      expect(appStore.getState().project.camera.x).toBe(120);
+      expect(appStore.getState().project.camera.y).toBe(55);
     });
   });
 });

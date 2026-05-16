@@ -25,6 +25,8 @@ import type { RecentProjectRecord } from "@/features/project/persistence/types";
 import { useAppStore } from "@/state/app-store";
 import { selectSortedAssets, selectSortedGenerationJobs } from "@/state/selectors/canvas-selectors";
 
+import { getVirtualWindowRange } from "./virtual-list";
+
 interface InspectorPanelProps {
   recentProjects: RecentProjectRecord[];
   onOpenRecentProject: (path: string) => void | Promise<void>;
@@ -37,6 +39,11 @@ function isAdditiveSelectionModifier(event: { ctrlKey: boolean; metaKey: boolean
 }
 
 const PROVIDER_LOG_LIMIT = 100;
+const ASSET_LAYER_WINDOW_THRESHOLD = 80;
+const ASSET_LAYER_ROW_HEIGHT = 64;
+const ASSET_LAYER_ROW_GAP = 8;
+const ASSET_LAYER_VIEWPORT_HEIGHT = 520;
+const ASSET_LAYER_OVERSCAN = 6;
 
 function formatPayloadForDisplay(payload: unknown) {
   if (payload === undefined) {
@@ -385,12 +392,14 @@ export function InspectorPanel({
 }: InspectorPanelProps) {
   const [activeTab, setActiveTab] = useState<"layers" | "jobs" | "recent">("layers");
   const [assetFilter, setAssetFilter] = useState<"all" | "imported" | "generated" | "text">("all");
+  const [assetLayerScrollTop, setAssetLayerScrollTop] = useState(0);
   const sortedAssets = useAppStore(selectSortedAssets);
   const generationJobs = useAppStore(selectSortedGenerationJobs);
   const openAiProviderLogs = useProviderRequestLogs("openai", PROVIDER_LOG_LIMIT);
   const ima2SidecarProviderLogs = useProviderRequestLogs("ima2-sidecar", PROVIDER_LOG_LIMIT);
   const removeFailedGenerationJobs = useAppStore((state) => state.removeFailedGenerationJobs);
   const selectedAssetIds = useAppStore((state) => state.project.selection.assetIds);
+  const selectedAssetIdSet = useMemo(() => new Set(selectedAssetIds), [selectedAssetIds]);
   const revealHiddenAsset = useAppStore((state) => state.revealHiddenAsset);
   const selectAsset = useAppStore((state) => state.selectAsset);
   const hideSelected = useAppStore((state) => state.hideSelected);
@@ -455,6 +464,26 @@ export function InspectorPanel({
       }),
     [assetFilter, sortedAssets],
   );
+  const shouldVirtualizeAssetLayers = filteredAssets.length > ASSET_LAYER_WINDOW_THRESHOLD;
+  const virtualAssetWindow = useMemo(
+    () =>
+      getVirtualWindowRange({
+        gap: ASSET_LAYER_ROW_GAP,
+        itemCount: filteredAssets.length,
+        itemHeight: ASSET_LAYER_ROW_HEIGHT,
+        overscan: ASSET_LAYER_OVERSCAN,
+        scrollTop: assetLayerScrollTop,
+        viewportHeight: ASSET_LAYER_VIEWPORT_HEIGHT,
+      }),
+    [assetLayerScrollTop, filteredAssets.length],
+  );
+  const renderedAssets = shouldVirtualizeAssetLayers
+    ? filteredAssets.slice(virtualAssetWindow.startIndex, virtualAssetWindow.endIndex)
+    : filteredAssets;
+
+  useEffect(() => {
+    setAssetLayerScrollTop(0);
+  }, [assetFilter]);
 
   return (
     <aside className="inspector-panel">
@@ -502,12 +531,37 @@ export function InspectorPanel({
           </div>
 
           {filteredAssets.length > 0 ? (
-            <div className="asset-layer-list">
-              {filteredAssets.map((asset) => (
+            <div
+              className={`asset-layer-list ${shouldVirtualizeAssetLayers ? "asset-layer-list--virtual" : ""}`}
+              onScroll={
+                shouldVirtualizeAssetLayers
+                  ? (event) => setAssetLayerScrollTop(event.currentTarget.scrollTop)
+                  : undefined
+              }
+            >
+              {shouldVirtualizeAssetLayers ? (
+                <div className="asset-layer-list__spacer" style={{ height: virtualAssetWindow.totalHeight }}>
+                  <div
+                    className="asset-layer-list__window"
+                    style={{ transform: `translateY(${virtualAssetWindow.offsetTop}px)` }}
+                  >
+                    {renderedAssets.map((asset) => (
+                      <AssetLayerRow
+                        key={asset.id}
+                        asset={asset}
+                        isSelected={selectedAssetIdSet.has(asset.id)}
+                        onReveal={revealHiddenAsset}
+                        onSelect={(assetId, additive) => selectAsset(assetId, { additive })}
+                        onToggleHidden={setAssetHidden}
+                      />
+                    ))}
+                  </div>
+                </div>
+              ) : renderedAssets.map((asset) => (
                 <AssetLayerRow
                   key={asset.id}
                   asset={asset}
-                  isSelected={selectedAssetIds.includes(asset.id)}
+                  isSelected={selectedAssetIdSet.has(asset.id)}
                   onReveal={revealHiddenAsset}
                   onSelect={(assetId, additive) => selectAsset(assetId, { additive })}
                   onToggleHidden={setAssetHidden}

@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
-    io::{Cursor, Read, Write},
+    io::{Read, Seek, Write},
     path::{Path, PathBuf},
 };
 
@@ -1168,8 +1168,8 @@ fn load_legacy_json_project(
     })
 }
 
-fn extract_archive_entry(
-    archive: &mut ZipArchive<Cursor<Vec<u8>>>,
+fn extract_archive_entry<R: Read + Seek>(
+    archive: &mut ZipArchive<R>,
     archive_path: &str,
     output_root: &Path,
 ) -> Result<String, String> {
@@ -1179,11 +1179,8 @@ fn extract_archive_entry(
     let target_path = output_root.join(PathBuf::from(archive_path));
     ensure_parent_directory(&target_path)?;
 
-    let mut contents = Vec::new();
-    entry
-        .read_to_end(&mut contents)
-        .map_err(|error| error.to_string())?;
-    fs::write(&target_path, contents).map_err(|error| error.to_string())?;
+    let mut output = fs::File::create(&target_path).map_err(|error| error.to_string())?;
+    std::io::copy(&mut entry, &mut output).map_err(|error| error.to_string())?;
 
     Ok(normalize_path(&target_path))
 }
@@ -1191,9 +1188,9 @@ fn extract_archive_entry(
 fn load_archive_project(
     app: Option<&AppHandle>,
     project_path: &Path,
-    bytes: Vec<u8>,
 ) -> Result<Option<ProjectPersistenceHandle>, String> {
-    let mut archive = match ZipArchive::new(Cursor::new(bytes)) {
+    let file = fs::File::open(project_path).map_err(|error| error.to_string())?;
+    let mut archive = match ZipArchive::new(file) {
         Ok(archive) => archive,
         Err(_) => return Ok(None),
     };
@@ -1432,12 +1429,11 @@ fn load_project_file_internal(
     app: Option<&AppHandle>,
     project_path: &Path,
 ) -> Result<ProjectPersistenceHandle, String> {
-    let bytes = fs::read(project_path).map_err(|error| error.to_string())?;
-
-    if let Some(handle) = load_archive_project(app, project_path, bytes.clone())? {
+    if let Some(handle) = load_archive_project(app, project_path)? {
         return Ok(handle);
     }
 
+    let bytes = fs::read(project_path).map_err(|error| error.to_string())?;
     load_legacy_json_project(project_path, &bytes)
 }
 
@@ -1786,6 +1782,7 @@ pub fn list_recent_projects(app: AppHandle) -> Result<Vec<RecentProjectRecord>, 
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::io::Cursor;
 
     fn sample_project() -> RuntimeProject {
         RuntimeProject {

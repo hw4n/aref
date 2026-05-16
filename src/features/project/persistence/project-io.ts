@@ -21,6 +21,7 @@ import type {
 import { hasTauriRuntime } from "./tauri-runtime";
 
 const PROJECT_FILE_EXTENSIONS = ["aref"];
+const MAX_MANAGED_THUMBNAIL_REQUEST_CONCURRENCY = 1;
 
 type ManagedThumbnailDraft = {
   imagePath: string;
@@ -29,6 +30,12 @@ type ManagedThumbnailDraft = {
 };
 
 const managedThumbnailRequests = new Map<string, Promise<string | null>>();
+const queuedManagedThumbnailRequests: Array<{
+  draft: ManagedThumbnailDraft;
+  resolve: (thumbnailPath: string | null) => void;
+  reject: (error: unknown) => void;
+}> = [];
+let activeManagedThumbnailRequestCount = 0;
 
 function isRemoteUrl(value: string) {
   return value.startsWith("http://") || value.startsWith("https://");
@@ -152,6 +159,38 @@ async function createManagedImageThumbnailInternal(draft: ManagedThumbnailDraft)
   }
 }
 
+function pumpManagedThumbnailQueue() {
+  while (
+    activeManagedThumbnailRequestCount < MAX_MANAGED_THUMBNAIL_REQUEST_CONCURRENCY
+    && queuedManagedThumbnailRequests.length > 0
+  ) {
+    const request = queuedManagedThumbnailRequests.shift();
+
+    if (!request) {
+      return;
+    }
+
+    activeManagedThumbnailRequestCount += 1;
+    createManagedImageThumbnailInternal(request.draft)
+      .then(request.resolve, request.reject)
+      .finally(() => {
+        activeManagedThumbnailRequestCount -= 1;
+        pumpManagedThumbnailQueue();
+      });
+  }
+}
+
+function enqueueManagedImageThumbnail(draft: ManagedThumbnailDraft) {
+  return new Promise<string | null>((resolve, reject) => {
+    queuedManagedThumbnailRequests.push({
+      draft,
+      resolve,
+      reject,
+    });
+    pumpManagedThumbnailQueue();
+  });
+}
+
 export function createManagedImageThumbnail(draft: ManagedThumbnailDraft) {
   const existingRequest = managedThumbnailRequests.get(draft.imagePath);
 
@@ -159,7 +198,7 @@ export function createManagedImageThumbnail(draft: ManagedThumbnailDraft) {
     return existingRequest;
   }
 
-  const request = createManagedImageThumbnailInternal(draft).finally(() => {
+  const request = enqueueManagedImageThumbnail(draft).finally(() => {
     managedThumbnailRequests.delete(draft.imagePath);
   });
   managedThumbnailRequests.set(draft.imagePath, request);

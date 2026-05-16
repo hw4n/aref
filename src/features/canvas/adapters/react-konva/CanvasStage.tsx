@@ -886,6 +886,7 @@ function CanvasStageComponent({ onCancelGeneration }: CanvasStageProps = {}) {
   } | null>(null);
   const isPanningRef = useRef(false);
   const pendingPanCameraPositionRef = useRef<Point | null>(null);
+  const livePanCameraPositionRef = useRef<Point | null>(null);
   const panCameraAnimationFrameRef = useRef<number | null>(null);
   const pendingMarqueeRef = useRef<CanvasRect | null>(null);
   const marqueeAnimationFrameRef = useRef<number | null>(null);
@@ -1543,6 +1544,18 @@ function CanvasStageComponent({ onCancelGeneration }: CanvasStageProps = {}) {
     }
   };
 
+  const applyLivePanCameraPosition = (position: Point) => {
+    livePanCameraPositionRef.current = position;
+    const stage = stageRef.current;
+
+    if (!stage) {
+      return;
+    }
+
+    stage.position(position);
+    stage.batchDraw();
+  };
+
   const schedulePanCameraPosition = (position: Point) => {
     pendingPanCameraPositionRef.current = position;
 
@@ -1556,7 +1569,7 @@ function CanvasStageComponent({ onCancelGeneration }: CanvasStageProps = {}) {
       pendingPanCameraPositionRef.current = null;
 
       if (nextPosition) {
-        setCameraPosition(nextPosition);
+        applyLivePanCameraPosition(nextPosition);
       }
     });
   };
@@ -1567,12 +1580,15 @@ function CanvasStageComponent({ onCancelGeneration }: CanvasStageProps = {}) {
       panCameraAnimationFrameRef.current = null;
     }
 
-    const nextPosition = fallbackPosition ?? pendingPanCameraPositionRef.current;
+    const nextPosition = fallbackPosition ?? pendingPanCameraPositionRef.current ?? livePanCameraPositionRef.current;
     pendingPanCameraPositionRef.current = null;
 
     if (nextPosition) {
+      applyLivePanCameraPosition(nextPosition);
       setCameraPosition(nextPosition);
     }
+
+    livePanCameraPositionRef.current = null;
   };
 
   const scheduleMarquee = (nextMarquee: CanvasRect) => {
@@ -2030,13 +2046,17 @@ function CanvasStageComponent({ onCancelGeneration }: CanvasStageProps = {}) {
 
               if (shouldPan) {
                 event.evt.preventDefault();
-                setCanvasInteractionActive(true);
+                setCanvasInteractionPreviewActive(true);
                 panSessionRef.current = {
                   originPointer: pointer,
                   originCamera: {
                     x: camera.x,
                     y: camera.y,
                   },
+                };
+                livePanCameraPositionRef.current = {
+                  x: camera.x,
+                  y: camera.y,
                 };
                 setIsPanning(true);
                 return;
@@ -2099,7 +2119,7 @@ function CanvasStageComponent({ onCancelGeneration }: CanvasStageProps = {}) {
               setIsPanning(false);
               finalizeMarquee(pointer);
               if (panSession) {
-                setCanvasInteractionActive(false);
+                setCanvasInteractionPreviewActive(false);
               } else {
                 setCanvasInteractionPreviewActive(false);
               }
@@ -2118,7 +2138,7 @@ function CanvasStageComponent({ onCancelGeneration }: CanvasStageProps = {}) {
               panSessionRef.current = null;
               setIsPanning(false);
               if (panSession) {
-                setCanvasInteractionActive(false);
+                setCanvasInteractionPreviewActive(false);
               } else {
                 setCanvasInteractionPreviewActive(false);
               }

@@ -800,6 +800,12 @@ button:disabled {
   cursor: grabbing;
 }
 
+.canvas-loading {
+  position: absolute;
+  inset: 0;
+  background: var(--bg-canvas);
+}
+
 .canvas-statusbar {
   position: absolute;
   left: 12px;
@@ -1751,12 +1757,34 @@ button:disabled {
   gap: 6px;
 }
 
+.asset-layer-list--virtual {
+  display: block;
+  max-height: 520px;
+  overflow-y: auto;
+  contain: content;
+}
+
+.asset-layer-list__spacer {
+  position: relative;
+}
+
+.asset-layer-list__window {
+  position: absolute;
+  inset: 0 0 auto;
+  display: grid;
+  gap: 8px;
+}
+
 .asset-layer-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
   border: 1px solid var(--border);
   background: #121820;
+}
+
+.asset-layer-list--virtual .asset-layer-row {
+  min-height: 64px;
 }
 
 .asset-layer-row--selected {
