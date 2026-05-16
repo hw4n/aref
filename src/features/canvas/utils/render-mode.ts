@@ -8,14 +8,12 @@ export const CANVAS_SETTLED_PREVIEW_MAX_RENDERED_DIMENSION = 512;
 export interface CanvasRenderActivityState {
   isCameraRenderSettling: boolean;
   isInteractionRenderSettling: boolean;
-  isPanning: boolean;
   hasMarqueeSession: boolean;
 }
 
 export function getCanvasRenderMode(state: CanvasRenderActivityState): CanvasRenderMode {
   return state.isCameraRenderSettling
     || state.isInteractionRenderSettling
-    || state.isPanning
     || state.hasMarqueeSession
     ? "interactive"
     : "settled";

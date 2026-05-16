@@ -44,6 +44,7 @@ import {
   CANVAS_RETAIN_OVERSCAN_SCREENS,
   CANVAS_RENDER_OVERSCAN_SCREENS,
   assetIntersectsViewport,
+  getCameraCullingAnchor,
   getCameraOverscanViewport,
   getStableRenderAssetIds,
 } from "@/features/canvas/utils/viewport-rendering";
@@ -881,6 +882,11 @@ function CanvasStageComponent({ onCancelGeneration }: CanvasStageProps = {}) {
     originPointer: Point;
     originCamera: Point;
   } | null>(null);
+  const isPanningRef = useRef(false);
+  const pendingPanCameraPositionRef = useRef<Point | null>(null);
+  const panCameraAnimationFrameRef = useRef<number | null>(null);
+  const pendingMarqueeRef = useRef<CanvasRect | null>(null);
+  const marqueeAnimationFrameRef = useRef<number | null>(null);
   const size = useStageContainerSize(panelElement);
 
   const camera = useAppStore((state) => state.project.camera);
@@ -1092,21 +1098,45 @@ function CanvasStageComponent({ onCancelGeneration }: CanvasStageProps = {}) {
   const renderMode: CanvasRenderMode = getCanvasRenderMode({
     isCameraRenderSettling,
     isInteractionRenderSettling,
-    isPanning,
     hasMarqueeSession: Boolean(marqueeSession),
   });
   const canvasPixelRatio = getCanvasDevicePixelRatio();
+  const cullingAnchor = getCameraCullingAnchor(camera);
   const renderViewport = useMemo(
-    () => getCameraOverscanViewport(camera, CANVAS_RENDER_OVERSCAN_SCREENS),
-    [camera.x, camera.y, camera.zoom, camera.viewportHeight, camera.viewportWidth],
+    () =>
+      getCameraOverscanViewport(
+        {
+          ...camera,
+          x: cullingAnchor.x,
+          y: cullingAnchor.y,
+        },
+        CANVAS_RENDER_OVERSCAN_SCREENS,
+      ),
+    [camera.zoom, camera.viewportHeight, camera.viewportWidth, cullingAnchor.x, cullingAnchor.y],
   );
   const preloadViewport = useMemo(
-    () => getCameraOverscanViewport(camera, CANVAS_PRELOAD_OVERSCAN_SCREENS),
-    [camera.x, camera.y, camera.zoom, camera.viewportHeight, camera.viewportWidth],
+    () =>
+      getCameraOverscanViewport(
+        {
+          ...camera,
+          x: cullingAnchor.x,
+          y: cullingAnchor.y,
+        },
+        CANVAS_PRELOAD_OVERSCAN_SCREENS,
+      ),
+    [camera.zoom, camera.viewportHeight, camera.viewportWidth, cullingAnchor.x, cullingAnchor.y],
   );
   const retainViewport = useMemo(
-    () => getCameraOverscanViewport(camera, CANVAS_RETAIN_OVERSCAN_SCREENS),
-    [camera.x, camera.y, camera.zoom, camera.viewportHeight, camera.viewportWidth],
+    () =>
+      getCameraOverscanViewport(
+        {
+          ...camera,
+          x: cullingAnchor.x,
+          y: cullingAnchor.y,
+        },
+        CANVAS_RETAIN_OVERSCAN_SCREENS,
+      ),
+    [camera.zoom, camera.viewportHeight, camera.viewportWidth, cullingAnchor.x, cullingAnchor.y],
   );
   const targetRenderAssetIds = useMemo(
     () =>
@@ -1199,6 +1229,9 @@ function CanvasStageComponent({ onCancelGeneration }: CanvasStageProps = {}) {
     : isSpacePressed
       ? "canvas-surface canvas-surface--pan"
       : "canvas-surface";
+
+  isPanningRef.current = isPanning;
+
   const canHideSelected = selectedAssetIds.some((assetId) => !assetMap[assetId]?.hidden);
   const canUnhideSelected = hiddenSelectedCount > 0;
   const selectedCanvasItemCount = selectedAssetIds.length + selectedGenerationJobIds.length;
@@ -1298,6 +1331,18 @@ function CanvasStageComponent({ onCancelGeneration }: CanvasStageProps = {}) {
   }, [generationJobMap]);
 
   useEffect(() => {
+    return () => {
+      if (panCameraAnimationFrameRef.current !== null) {
+        window.cancelAnimationFrame(panCameraAnimationFrameRef.current);
+      }
+
+      if (marqueeAnimationFrameRef.current !== null) {
+        window.cancelAnimationFrame(marqueeAnimationFrameRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     setSelectedGenerationJobIds((currentIds) => {
       const nextIds = currentIds.filter((jobId) => Boolean(generationJobMap[jobId]));
 
@@ -1333,6 +1378,10 @@ function CanvasStageComponent({ onCancelGeneration }: CanvasStageProps = {}) {
   useEffect(() => {
     if (!hasTrackedCameraRenderRef.current) {
       hasTrackedCameraRenderRef.current = true;
+      return;
+    }
+
+    if (isPanningRef.current) {
       return;
     }
 
@@ -1502,6 +1551,79 @@ function CanvasStageComponent({ onCancelGeneration }: CanvasStageProps = {}) {
     for (const node of Object.values(generationJobNodeRefs.current)) {
       node?.getLayer()?.batchDraw();
     }
+  };
+
+  const schedulePanCameraPosition = (position: Point) => {
+    pendingPanCameraPositionRef.current = position;
+
+    if (panCameraAnimationFrameRef.current !== null) {
+      return;
+    }
+
+    panCameraAnimationFrameRef.current = window.requestAnimationFrame(() => {
+      panCameraAnimationFrameRef.current = null;
+      const nextPosition = pendingPanCameraPositionRef.current;
+      pendingPanCameraPositionRef.current = null;
+
+      if (nextPosition) {
+        setCameraPosition(nextPosition);
+      }
+    });
+  };
+
+  const flushPendingPanCameraPosition = (fallbackPosition: Point | null = null) => {
+    if (panCameraAnimationFrameRef.current !== null) {
+      window.cancelAnimationFrame(panCameraAnimationFrameRef.current);
+      panCameraAnimationFrameRef.current = null;
+    }
+
+    const nextPosition = fallbackPosition ?? pendingPanCameraPositionRef.current;
+    pendingPanCameraPositionRef.current = null;
+
+    if (nextPosition) {
+      setCameraPosition(nextPosition);
+    }
+  };
+
+  const scheduleMarquee = (nextMarquee: CanvasRect) => {
+    pendingMarqueeRef.current = nextMarquee;
+
+    if (marqueeAnimationFrameRef.current !== null) {
+      return;
+    }
+
+    marqueeAnimationFrameRef.current = window.requestAnimationFrame(() => {
+      marqueeAnimationFrameRef.current = null;
+      const queuedMarquee = pendingMarqueeRef.current;
+      pendingMarqueeRef.current = null;
+
+      if (queuedMarquee) {
+        setMarquee(queuedMarquee);
+      }
+    });
+  };
+
+  const flushPendingMarquee = () => {
+    if (marqueeAnimationFrameRef.current !== null) {
+      window.cancelAnimationFrame(marqueeAnimationFrameRef.current);
+      marqueeAnimationFrameRef.current = null;
+    }
+
+    const nextMarquee = pendingMarqueeRef.current;
+    pendingMarqueeRef.current = null;
+
+    if (nextMarquee) {
+      setMarquee(nextMarquee);
+    }
+  };
+
+  const clearPendingMarquee = () => {
+    if (marqueeAnimationFrameRef.current !== null) {
+      window.cancelAnimationFrame(marqueeAnimationFrameRef.current);
+      marqueeAnimationFrameRef.current = null;
+    }
+
+    pendingMarqueeRef.current = null;
   };
 
   const commitTransformerState = () => {
@@ -1776,6 +1898,10 @@ function CanvasStageComponent({ onCancelGeneration }: CanvasStageProps = {}) {
 
     const width = pointer ? Math.abs(pointer.x - marqueeSession.originScreen.x) : 0;
     const height = pointer ? Math.abs(pointer.y - marqueeSession.originScreen.y) : 0;
+    const finalMarquee = pointer
+      ? normalizeRect(marqueeSession.originWorld, screenToWorld(camera, pointer))
+      : null;
+    clearPendingMarquee();
 
     if (!pointer || (width < 4 && height < 4)) {
       if (!marqueeSession.additive) {
@@ -1787,14 +1913,14 @@ function CanvasStageComponent({ onCancelGeneration }: CanvasStageProps = {}) {
       return;
     }
 
-    const hits = marquee
+    const hits = finalMarquee
       ? assets
-          .filter((asset) => rectsIntersect(getAssetBounds(asset), marquee))
+          .filter((asset) => rectsIntersect(getAssetBounds(asset), finalMarquee))
           .map((asset) => asset.id)
       : [];
-    const generationJobHits = marquee
+    const generationJobHits = finalMarquee
       ? activeGenerationJobs
-          .filter((job) => rectsIntersect(getGenerationJobBounds(job), marquee))
+          .filter((job) => rectsIntersect(getGenerationJobBounds(job), finalMarquee))
           .map((job) => job.id)
       : [];
 
@@ -1912,7 +2038,7 @@ function CanvasStageComponent({ onCancelGeneration }: CanvasStageProps = {}) {
 
               if (shouldPan) {
                 event.evt.preventDefault();
-                setCanvasInteractionPreviewActive(true);
+                setCanvasInteractionActive(true);
                 panSessionRef.current = {
                   originPointer: pointer,
                   originCamera: {
@@ -1948,7 +2074,7 @@ function CanvasStageComponent({ onCancelGeneration }: CanvasStageProps = {}) {
               }
 
               if (panSessionRef.current) {
-                setCameraPosition({
+                schedulePanCameraPosition({
                   x: panSessionRef.current.originCamera.x + (pointer.x - panSessionRef.current.originPointer.x),
                   y: panSessionRef.current.originCamera.y + (pointer.y - panSessionRef.current.originPointer.y),
                 });
@@ -1957,20 +2083,42 @@ function CanvasStageComponent({ onCancelGeneration }: CanvasStageProps = {}) {
 
               if (marqueeSession) {
                 const worldPointer = screenToWorld(camera, pointer);
-                setMarquee(normalizeRect(marqueeSession.originWorld, worldPointer));
+                scheduleMarquee(normalizeRect(marqueeSession.originWorld, worldPointer));
               }
             }}
             onMouseUp={(event) => {
               const pointer = event.target.getStage()?.getPointerPosition() ?? null;
+              const panSession = panSessionRef.current;
+
+              if (panSession && pointer) {
+                flushPendingPanCameraPosition({
+                  x: panSession.originCamera.x + (pointer.x - panSession.originPointer.x),
+                  y: panSession.originCamera.y + (pointer.y - panSession.originPointer.y),
+                });
+              } else {
+                flushPendingPanCameraPosition();
+              }
+
               panSessionRef.current = null;
               setIsPanning(false);
               finalizeMarquee(pointer);
-              setCanvasInteractionPreviewActive(false);
+              if (panSession) {
+                setCanvasInteractionActive(false);
+              } else {
+                setCanvasInteractionPreviewActive(false);
+              }
             }}
             onMouseLeave={() => {
+              const panSession = panSessionRef.current;
+              flushPendingPanCameraPosition();
+              flushPendingMarquee();
               panSessionRef.current = null;
               setIsPanning(false);
-              setCanvasInteractionPreviewActive(false);
+              if (panSession) {
+                setCanvasInteractionActive(false);
+              } else {
+                setCanvasInteractionPreviewActive(false);
+              }
             }}
             onContextMenu={(event) => {
               event.evt.preventDefault();

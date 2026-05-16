@@ -61,22 +61,19 @@ describe("canvas render mode", () => {
     expect(getCanvasRenderMode({
       isCameraRenderSettling: false,
       isInteractionRenderSettling: false,
-      isPanning: false,
       hasMarqueeSession: false,
     })).toBe("settled");
 
     expect(getCanvasRenderMode({
       isCameraRenderSettling: true,
       isInteractionRenderSettling: false,
-      isPanning: false,
       hasMarqueeSession: false,
     })).toBe("interactive");
 
     expect(getCanvasRenderMode({
       isCameraRenderSettling: false,
       isInteractionRenderSettling: false,
-      isPanning: true,
-      hasMarqueeSession: false,
+      hasMarqueeSession: true,
     })).toBe("interactive");
   });
 

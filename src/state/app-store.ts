@@ -193,6 +193,25 @@ function bumpProject(project: Project): Project {
   };
 }
 
+function arePointsEqual(left: Point, right: Point) {
+  return left.x === right.x && left.y === right.y;
+}
+
+function areNullableRectsEqual(left: Project["selection"]["marquee"], right: Project["selection"]["marquee"]) {
+  if (left === right) {
+    return true;
+  }
+
+  if (!left || !right) {
+    return false;
+  }
+
+  return left.x === right.x
+    && left.y === right.y
+    && left.width === right.width
+    && left.height === right.height;
+}
+
 function updateAssetRecord(
   assets: Record<string, AssetItem>,
   assetIds: string[],
@@ -567,6 +586,10 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
       });
     },
     panCameraBy: (deltaX, deltaY) => {
+      if (deltaX === 0 && deltaY === 0) {
+        return;
+      }
+
       set((state) => ({
         project: bumpProject({
           ...state.project,
@@ -575,16 +598,22 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
       }));
     },
     setCameraPosition: (position) => {
-      set((state) => ({
-        project: bumpProject({
-          ...state.project,
-          camera: {
-            ...state.project.camera,
-            x: position.x,
-            y: position.y,
-          },
-        }),
-      }));
+      set((state) => {
+        if (arePointsEqual(state.project.camera, position)) {
+          return state;
+        }
+
+        return {
+          project: bumpProject({
+            ...state.project,
+            camera: {
+              ...state.project.camera,
+              x: position.x,
+              y: position.y,
+            },
+          }),
+        };
+      });
     },
     zoomCameraAtPoint: (pointer, zoomFactor) => {
       set((state) => ({
@@ -739,15 +768,21 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
       }));
     },
     setMarquee: (marquee) => {
-      set((state) => ({
-        project: {
-          ...state.project,
-          selection: {
-            ...state.project.selection,
-            marquee,
+      set((state) => {
+        if (areNullableRectsEqual(state.project.selection.marquee, marquee)) {
+          return state;
+        }
+
+        return {
+          project: {
+            ...state.project,
+            selection: {
+              ...state.project.selection,
+              marquee,
+            },
           },
-        },
-      }));
+        };
+      });
     },
     setAssetPosition: (assetId, position) => {
       set((state) => {

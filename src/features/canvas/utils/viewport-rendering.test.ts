@@ -6,6 +6,7 @@ import type { CameraState } from "@/domain/camera/types";
 import {
   assetIntersectsViewport,
   expandRect,
+  getCameraCullingAnchor,
   getCameraOverscanViewport,
   getStableRenderAssetIds,
   getCameraWorldViewport,
@@ -68,6 +69,22 @@ describe("viewport rendering", () => {
       width: 1200,
       height: 800,
     });
+  });
+
+  it("quantizes camera movement for viewport culling", () => {
+    expect(getCameraCullingAnchor(createCamera({
+      x: 240,
+      y: 180,
+      viewportWidth: 1000,
+      viewportHeight: 800,
+    }))).toEqual({ x: 0, y: 0 });
+
+    expect(getCameraCullingAnchor(createCamera({
+      x: 260,
+      y: 240,
+      viewportWidth: 1000,
+      viewportHeight: 800,
+    }))).toEqual({ x: 500, y: 400 });
   });
 
   it("detects assets that intersect the viewport", () => {

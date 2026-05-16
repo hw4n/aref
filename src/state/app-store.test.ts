@@ -380,6 +380,27 @@ describe("app store", () => {
     expect(store.getState().project.updatedAt).not.toBe(initialUpdatedAt);
   });
 
+  it("ignores redundant camera and marquee updates", () => {
+    const store = createAppStore();
+    const initialProject = store.getState().project;
+
+    store.getState().panCameraBy(0, 0);
+    store.getState().setCameraPosition({
+      x: initialProject.camera.x,
+      y: initialProject.camera.y,
+    });
+    store.getState().setMarquee(null);
+
+    expect(store.getState().project).toBe(initialProject);
+
+    store.getState().setMarquee({ x: 10, y: 20, width: 30, height: 40 });
+    const projectWithMarquee = store.getState().project;
+
+    store.getState().setMarquee({ x: 10, y: 20, width: 30, height: 40 });
+
+    expect(store.getState().project).toBe(projectWithMarquee);
+  });
+
   it("adds generated assets with provenance metadata when a job succeeds", () => {
     const store = createAppStore();
     const jobId = store.getState().queueGenerationJob(sampleGenerationRequest);

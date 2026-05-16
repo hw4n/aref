@@ -38,6 +38,16 @@ export function getCameraOverscanViewport(camera: CameraState, overscanScreens: 
   );
 }
 
+export function getCameraCullingAnchor(camera: CameraState, screenStepRatio = 0.5) {
+  const stepX = Math.max(1, camera.viewportWidth * screenStepRatio);
+  const stepY = Math.max(1, camera.viewportHeight * screenStepRatio);
+
+  return {
+    x: Math.round(camera.x / stepX) * stepX,
+    y: Math.round(camera.y / stepY) * stepY,
+  };
+}
+
 export function assetIntersectsViewport(asset: AssetItem, viewport: Rect) {
   return rectsIntersect(getAssetBounds(asset), viewport);
 }
