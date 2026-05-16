@@ -20,6 +20,7 @@ describe("preferences storage", () => {
     saveAppUiPreferences(
       {
         ...getDefaultAppUiPreferences(),
+        canvasRenderScale: 0.5,
         developerMode: true,
         generationConcurrencyMode: "aggressive",
         providerAuthMethods: {
@@ -32,6 +33,7 @@ describe("preferences storage", () => {
     const loaded = loadAppUiPreferences(storage);
     expect(loaded.providerAuthMethods.openai).toBe("api-key");
     expect(loaded.generationConcurrencyMode).toBe("aggressive");
+    expect(loaded.canvasRenderScale).toBe(0.5);
   });
 
   it("normalizes log visibility when developer mode is off", () => {
@@ -59,5 +61,13 @@ describe("preferences storage", () => {
     });
 
     expect(normalized.generationConcurrencyMode).toBe("stable");
+  });
+
+  it("falls back to full canvas render scale for invalid values", () => {
+    const normalized = normalizeAppUiPreferences({
+      canvasRenderScale: 0.33 as never,
+    });
+
+    expect(normalized.canvasRenderScale).toBe(1);
   });
 });

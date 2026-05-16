@@ -24,6 +24,7 @@ import {
   resetCameraZoom,
   resizeViewport,
 } from "@/domain/camera/camera-math";
+import { normalizeCanvasRenderScale, type CanvasRenderScale } from "@/domain/canvas/render-scale";
 import type { GenerationRequest } from "@/domain/jobs/types";
 import {
   createQueuedGenerationJob,
@@ -136,6 +137,7 @@ export interface AppStoreState {
   toggleLeftSidebar: () => void;
   toggleInspector: () => void;
   toggleGridVisible: () => void;
+  setCanvasRenderScale: (scale: CanvasRenderScale) => void;
   setInspectorWidth: (width: number) => void;
   setGenerationSheetWidth: (width: number) => void;
   setSettingsOpen: (open: boolean) => void;
@@ -823,14 +825,18 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
       set((state) => {
         const timestamp = new Date().toISOString();
         let didChange = false;
-        const nextAssets = { ...state.project.assets };
-        const nextJobs = { ...state.project.jobs };
+        let nextAssets = state.project.assets;
+        let nextJobs = state.project.jobs;
 
         for (const { id, position } of assetPositions) {
           const asset = nextAssets[id];
 
           if (!asset || asset.locked || (asset.x === position.x && asset.y === position.y)) {
             continue;
+          }
+
+          if (nextAssets === state.project.assets) {
+            nextAssets = { ...state.project.assets };
           }
 
           nextAssets[id] = {
@@ -847,6 +853,10 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
 
           if (!job || (job.canvasPlacement.x === position.x && job.canvasPlacement.y === position.y)) {
             continue;
+          }
+
+          if (nextJobs === state.project.jobs) {
+            nextJobs = { ...state.project.jobs };
           }
 
           nextJobs[id] = {
@@ -998,6 +1008,14 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
         uiPreferences: {
           ...state.uiPreferences,
           gridVisible: !state.uiPreferences.gridVisible,
+        },
+      }));
+    },
+    setCanvasRenderScale: (scale) => {
+      set((state) => ({
+        uiPreferences: {
+          ...state.uiPreferences,
+          canvasRenderScale: normalizeCanvasRenderScale(scale),
         },
       }));
     },

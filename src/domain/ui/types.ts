@@ -9,6 +9,7 @@ import type {
   ProviderAuthMethod,
   ProviderFamilyId,
 } from "@/domain/providers/types";
+import type { CanvasRenderScale } from "@/domain/canvas/render-scale";
 import type { ID } from "@/domain/shared/types";
 
 export interface GenerationSheetDraft {
@@ -43,6 +44,7 @@ export interface AppUiPreferences {
   leftRailOpen: boolean;
   inspectorOpen: boolean;
   gridVisible: boolean;
+  canvasRenderScale: CanvasRenderScale;
   inspectorWidth: number;
   generationSheetWidth: number;
   settingsSection: SettingsSurfaceSection;

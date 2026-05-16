@@ -251,6 +251,14 @@ describe("app store", () => {
     expect(store.getState().uiPreferences.logsVisible).toBe(false);
   });
 
+  it("stores the selected canvas render scale", () => {
+    const store = createAppStore();
+
+    store.getState().setCanvasRenderScale(0.5);
+
+    expect(store.getState().uiPreferences.canvasRenderScale).toBe(0.5);
+  });
+
   it("groups and ungroups a multi-selection", () => {
     const store = createSeededStore();
 
@@ -493,6 +501,22 @@ describe("app store", () => {
     expect(store.getState().project.jobs[jobId]?.canvasPlacement).not.toEqual({
       x: 720,
       y: 360,
+    });
+  });
+
+  it("moves generation placeholders without cloning the asset map", () => {
+    const store = createSeededStore();
+    const jobId = store.getState().queueGenerationJob(sampleGenerationRequest);
+    const assetsBeforeMove = store.getState().project.assets;
+
+    store.getState().setCanvasItemPositions({
+      generationJobPlacements: [{ id: jobId, position: { x: 640, y: 420 } }],
+    });
+
+    expect(store.getState().project.assets).toBe(assetsBeforeMove);
+    expect(store.getState().project.jobs[jobId]?.canvasPlacement).toEqual({
+      x: 640,
+      y: 420,
     });
   });
 

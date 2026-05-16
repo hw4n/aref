@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Konva from "konva";
 import { Circle, Group, Image as KonvaImage, Layer, Rect, Stage, Text, Transformer } from "react-konva";
 
@@ -22,6 +22,11 @@ import {
   type TextAssetItem,
 } from "@/domain/assets/types";
 import type { CameraState } from "@/domain/camera/types";
+import {
+  CANVAS_RENDER_SCALES,
+  getCanvasPixelRatio,
+  normalizeCanvasRenderScale,
+} from "@/domain/canvas/render-scale";
 import { screenToWorld } from "@/domain/camera/camera-math";
 import {
   computeGenerationCanvasLayout,
@@ -61,6 +66,7 @@ import { TextStylePanel } from "@/features/text/components/TextStylePanel";
 import { useAppStore } from "@/state/app-store";
 import {
   selectActiveGenerationJobs,
+  selectHiddenAssetCount,
   selectSelectedAssetIds,
   selectSortedVisibleAssets,
 } from "@/state/selectors/canvas-selectors";
@@ -815,7 +821,7 @@ function TextEditOverlay({
   );
 }
 
-export function CanvasStage({ onCancelGeneration }: CanvasStageProps = {}) {
+function CanvasStageComponent({ onCancelGeneration }: CanvasStageProps = {}) {
   const [panelElement, setPanelElement] = useState<HTMLDivElement | null>(null);
   const [isPanning, setIsPanning] = useState(false);
   const [isCameraRenderSettling, setIsCameraRenderSettling] = useState(false);
@@ -856,9 +862,7 @@ export function CanvasStage({ onCancelGeneration }: CanvasStageProps = {}) {
   const assetRegistry = useAppStore((state) => state.project.assets);
   const activeGenerationJobs = useAppStore(selectActiveGenerationJobs);
   const selectedAssetIds = useAppStore(selectSelectedAssetIds);
-  const hiddenAssetCount = useAppStore((state) =>
-    Object.values(state.project.assets).filter((asset) => asset.hidden).length,
-  );
+  const hiddenAssetCount = useAppStore(selectHiddenAssetCount);
   const hiddenSelectedCount = useAppStore((state) =>
     state.project.selection.assetIds.filter((assetId) => state.project.assets[assetId]?.hidden).length,
   );
@@ -903,6 +907,8 @@ export function CanvasStage({ onCancelGeneration }: CanvasStageProps = {}) {
   const redoVisibilityChange = useAppStore((state) => state.redoVisibilityChange);
   const zoomCameraAtPoint = useAppStore((state) => state.zoomCameraAtPoint);
   const gridVisible = useAppStore((state) => state.uiPreferences.gridVisible);
+  const canvasRenderScale = useAppStore((state) => state.uiPreferences.canvasRenderScale);
+  const setCanvasRenderScale = useAppStore((state) => state.setCanvasRenderScale);
   const isSpacePressed = useAppStore((state) => state.isSpacePressed);
   const pushToast = useAppStore((state) => state.pushToast);
 
@@ -1157,6 +1163,8 @@ export function CanvasStage({ onCancelGeneration }: CanvasStageProps = {}) {
     [renderAssets],
   );
   const zoomLabel = `${Math.round(camera.zoom * 100)}%`;
+  const renderScaleLabel = `${Math.round(canvasRenderScale * 100)}%`;
+  const canvasPixelRatio = getCanvasPixelRatio(canvasRenderScale);
   const hasLockedSelection = selectedAssetIds.some((assetId) => assetMap[assetId]?.locked);
   const isPanInteractionMode = isPanning || isSpacePressed || Boolean(marqueeSession);
   const panelClassName = gridVisible ? "canvas-panel" : "canvas-panel canvas-panel--grid-hidden";
@@ -1262,6 +1270,21 @@ export function CanvasStage({ onCancelGeneration }: CanvasStageProps = {}) {
   useEffect(() => {
     generationJobMapRef.current = generationJobMap;
   }, [generationJobMap]);
+
+  useEffect(() => {
+    Konva.pixelRatio = canvasPixelRatio;
+
+    const stage = stageRef.current;
+    if (!stage) {
+      return;
+    }
+
+    stage.bufferCanvas.setPixelRatio(canvasPixelRatio);
+    for (const layer of stage.getLayers()) {
+      layer.getCanvas().setPixelRatio(canvasPixelRatio);
+      layer.batchDraw();
+    }
+  }, [canvasPixelRatio, size.height, size.width]);
 
   useEffect(() => {
     setSelectedGenerationJobIds((currentIds) => {
@@ -2190,7 +2213,24 @@ export function CanvasStage({ onCancelGeneration }: CanvasStageProps = {}) {
         <button className="canvas-statusbar__item" onClick={resetZoom} title="Reset Zoom">
           {zoomLabel}
         </button>
+        <label className="canvas-statusbar__scale" title={`Canvas render scale: ${renderScaleLabel}`}>
+          <span className="sr-only">Canvas render scale</span>
+          <select
+            aria-label="Canvas render scale"
+            className="canvas-statusbar__select"
+            value={canvasRenderScale}
+            onChange={(event) => setCanvasRenderScale(normalizeCanvasRenderScale(Number(event.currentTarget.value)))}
+          >
+            {CANVAS_RENDER_SCALES.map((scale) => (
+              <option key={scale} value={scale}>
+                {`Render ${Math.round(scale * 100)}%`}
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
     </div>
   );
 }
+
+export const CanvasStage = memo(CanvasStageComponent);

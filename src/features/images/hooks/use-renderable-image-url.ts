@@ -4,12 +4,15 @@ import { isLikelyFilePath, readManagedImageBytes } from "@/features/project/pers
 import { hasTauriRuntime } from "@/features/project/persistence/tauri-runtime";
 
 const MAX_RENDERABLE_IMAGE_CACHE_SIZE = 96;
+const MAX_RENDERABLE_IMAGE_URL_BYTES = 512 * 1024 * 1024;
 const MAX_RENDERABLE_IMAGE_ELEMENT_CACHE_SIZE = 64;
+const MAX_RENDERABLE_IMAGE_ELEMENT_PIXELS = 120_000_000;
 const DEFAULT_PRELOAD_CONCURRENCY = 3;
 
 interface CachedRenderableImageUrl {
   url: string;
   objectUrl: string | null;
+  byteLength: number;
   lastUsed: number;
 }
 
@@ -31,7 +34,15 @@ function touchCachedRenderableImage(source: string, entry: CachedRenderableImage
 }
 
 function trimRenderableImageUrlCache() {
-  if (renderableImageUrlCache.size <= MAX_RENDERABLE_IMAGE_CACHE_SIZE) {
+  const totalBytes = [...renderableImageUrlCache.values()].reduce(
+    (sum, entry) => sum + entry.byteLength,
+    0,
+  );
+
+  if (
+    renderableImageUrlCache.size <= MAX_RENDERABLE_IMAGE_CACHE_SIZE
+    && totalBytes <= MAX_RENDERABLE_IMAGE_URL_BYTES
+  ) {
     return;
   }
 
@@ -43,10 +54,20 @@ function trimRenderableImageUrlCache() {
         !renderableImageElementCache.has(source),
     )
     .sort(([, left], [, right]) => left.lastUsed - right.lastUsed);
-  const trimCount = renderableImageUrlCache.size - MAX_RENDERABLE_IMAGE_CACHE_SIZE;
+  let nextSize = renderableImageUrlCache.size;
+  let nextBytes = totalBytes;
 
-  for (const [source, entry] of entries.slice(0, trimCount)) {
+  for (const [source, entry] of entries) {
+    if (
+      nextSize <= MAX_RENDERABLE_IMAGE_CACHE_SIZE
+      && nextBytes <= MAX_RENDERABLE_IMAGE_URL_BYTES
+    ) {
+      break;
+    }
+
     renderableImageUrlCache.delete(source);
+    nextSize -= 1;
+    nextBytes -= entry.byteLength;
 
     if (entry.objectUrl) {
       URL.revokeObjectURL(entry.objectUrl);
@@ -60,27 +81,55 @@ function touchCachedRenderableImageElement(source: string, entry: CachedRenderab
 }
 
 function trimRenderableImageElementCache() {
-  if (renderableImageElementCache.size <= MAX_RENDERABLE_IMAGE_ELEMENT_CACHE_SIZE) {
+  const totalPixels = [...renderableImageElementCache.values()].reduce(
+    (sum, entry) => sum + entry.image.naturalWidth * entry.image.naturalHeight,
+    0,
+  );
+
+  if (
+    renderableImageElementCache.size <= MAX_RENDERABLE_IMAGE_ELEMENT_CACHE_SIZE
+    && totalPixels <= MAX_RENDERABLE_IMAGE_ELEMENT_PIXELS
+  ) {
     return;
   }
 
   const entries = [...renderableImageElementCache.entries()]
     .filter(([source]) => !pendingRenderableImageElements.has(source))
     .sort(([, left], [, right]) => left.lastUsed - right.lastUsed);
-  const trimCount = renderableImageElementCache.size - MAX_RENDERABLE_IMAGE_ELEMENT_CACHE_SIZE;
+  let nextSize = renderableImageElementCache.size;
+  let nextPixels = totalPixels;
 
-  for (const [source] of entries.slice(0, trimCount)) {
+  for (const [source, entry] of entries) {
+    if (
+      nextSize <= MAX_RENDERABLE_IMAGE_ELEMENT_CACHE_SIZE
+      && nextPixels <= MAX_RENDERABLE_IMAGE_ELEMENT_PIXELS
+    ) {
+      break;
+    }
+
     renderableImageElementCache.delete(source);
+    nextSize -= 1;
+    nextPixels -= entry.image.naturalWidth * entry.image.naturalHeight;
   }
+
+  trimRenderableImageUrlCache();
 }
 
 async function createRenderableImageUrl(source: string) {
   if (hasTauriRuntime() && isLikelyFilePath(source)) {
     const bytes = await readManagedImageBytes(source);
-    return URL.createObjectURL(new Blob([new Uint8Array(bytes)]));
+    return {
+      url: URL.createObjectURL(new Blob([new Uint8Array(bytes)])),
+      objectUrl: true,
+      byteLength: bytes.length,
+    };
   }
 
-  return source;
+  return {
+    url: source,
+    objectUrl: false,
+    byteLength: source.startsWith("data:") ? source.length : 0,
+  };
 }
 
 export async function resolveRenderableImageUrl(source: string) {
@@ -102,17 +151,18 @@ export async function resolveRenderableImageUrl(source: string) {
   }
 
   const pendingUrl = createRenderableImageUrl(source)
-    .then((url) => {
+    .then((result) => {
       const entry: CachedRenderableImageUrl = {
-        url,
-        objectUrl: url === source ? null : url,
+        url: result.url,
+        objectUrl: result.objectUrl ? result.url : null,
+        byteLength: result.byteLength,
         lastUsed: ++renderableImageUrlCacheClock,
       };
 
       renderableImageUrlCache.set(source, entry);
       trimRenderableImageUrlCache();
 
-      return url;
+      return result.url;
     })
     .finally(() => {
       pendingRenderableImageUrls.delete(source);

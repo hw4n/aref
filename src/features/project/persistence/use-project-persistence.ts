@@ -37,9 +37,13 @@ export function useProjectPersistence() {
   const autosaveSnapshotFingerprintRef = useRef<string | null>(null);
   const projectRef = useRef(project);
 
+  const projectAssetCount = useMemo(
+    () => Object.keys(project.assets).length,
+    [project.assets],
+  );
   const projectFingerprint = useMemo(
-    () => createProjectFingerprint(project.id, project.updatedAt, Object.keys(project.assets).length),
-    [project.assets, project.id, project.updatedAt],
+    () => createProjectFingerprint(project.id, project.updatedAt, projectAssetCount),
+    [project.id, project.updatedAt, projectAssetCount],
   );
 
   useEffect(() => {
