@@ -25,7 +25,11 @@
       }
     ],
     "security": {
-      "capabilities": ["main-capability"]
+      "capabilities": ["main-capability"],
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["$APPLOCALDATA/**"]
+      }
     }
   },
   "bundle": {

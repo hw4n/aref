@@ -3,7 +3,7 @@ import { isImageAsset, type AssetItem } from "@/domain/assets/types";
 export type CanvasRenderMode = "interactive" | "settled";
 
 export const CANVAS_RENDER_SETTLE_MS = 180;
-export const CANVAS_SETTLED_PREVIEW_MAX_RENDERED_DIMENSION = 512;
+export const CANVAS_SETTLED_PREVIEW_MAX_RENDERED_DIMENSION = 1024;
 
 export interface CanvasRenderActivityState {
   isCameraRenderSettling: boolean;

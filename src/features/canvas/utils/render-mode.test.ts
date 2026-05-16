@@ -81,10 +81,30 @@ describe("canvas render mode", () => {
   it("uses image thumbnails for interactive rendering and small settled images", () => {
     expect(shouldUseCanvasPreviewImage(imageAsset, "interactive")).toBe(true);
     expect(shouldUseCanvasPreviewImage(imageAsset, "settled")).toBe(false);
-    expect(shouldUseCanvasPreviewImage(imageAsset, "settled", 512)).toBe(true);
-    expect(shouldUseCanvasPreviewImage(imageAsset, "settled", 513)).toBe(false);
+    expect(shouldUseCanvasPreviewImage(imageAsset, "settled", 1024)).toBe(true);
+    expect(shouldUseCanvasPreviewImage(imageAsset, "settled", 1025)).toBe(false);
     expect(shouldUseCanvasPreviewImage({ ...imageAsset, thumbnailPath: null }, "interactive")).toBe(false);
     expect(shouldUseCanvasPreviewImage(textAsset, "interactive")).toBe(false);
+  });
+
+  it("keeps moderately scaled 4k images on thumbnails instead of loading originals", () => {
+    const fourKAsset: ImageAssetItem = {
+      ...imageAsset,
+      width: 2160,
+      height: 3840,
+      scale: 0.094,
+    };
+    const renderedMaxDimension = fourKAsset.height * fourKAsset.scale * 1.7;
+
+    expect(Math.round(renderedMaxDimension)).toBe(614);
+    expect(shouldUseCanvasPreviewImage(fourKAsset, "settled", renderedMaxDimension)).toBe(true);
+    expect(getCanvasImagePreloadSources({
+      asset: fourKAsset,
+      renderMode: "settled",
+      renderedMaxDimension,
+      intersectsRenderViewport: true,
+      isPinned: false,
+    })).toEqual(["/tmp/image-thumb.jpg"]);
   });
 
   it("preloads full-size images only when they are actually rendered", () => {

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { convertFileSrc } from "@tauri-apps/api/core";
 
 import { isLikelyFilePath, readManagedImageBytes } from "@/features/project/persistence/project-io";
 import { hasTauriRuntime } from "@/features/project/persistence/tauri-runtime";
@@ -185,11 +186,10 @@ function enqueueRenderableImageElementLoad(
 
 async function createRenderableImageUrl(source: string) {
   if (hasTauriRuntime() && isLikelyFilePath(source)) {
-    const bytes = await readManagedImageBytes(source);
     return {
-      url: URL.createObjectURL(new Blob([new Uint8Array(bytes)])),
-      objectUrl: true,
-      byteLength: bytes.length,
+      url: convertFileSrc(source),
+      objectUrl: false,
+      byteLength: 0,
     };
   }
 
@@ -198,6 +198,40 @@ async function createRenderableImageUrl(source: string) {
     objectUrl: false,
     byteLength: source.startsWith("data:") ? source.length : 0,
   };
+}
+
+async function createRenderableImageBlobUrl(source: string) {
+  const bytes = await readManagedImageBytes(source);
+
+  return {
+    url: URL.createObjectURL(new Blob([new Uint8Array(bytes)])),
+    objectUrl: true,
+    byteLength: bytes.length,
+  };
+}
+
+function cacheRenderableImageUrl(source: string, result: {
+  url: string;
+  objectUrl: boolean;
+  byteLength: number;
+}) {
+  const previousEntry = renderableImageUrlCache.get(source);
+
+  if (previousEntry?.objectUrl && previousEntry.objectUrl !== result.url) {
+    URL.revokeObjectURL(previousEntry.objectUrl);
+  }
+
+  const entry: CachedRenderableImageUrl = {
+    url: result.url,
+    objectUrl: result.objectUrl ? result.url : null,
+    byteLength: result.byteLength,
+    lastUsed: ++renderableImageUrlCacheClock,
+  };
+
+  renderableImageUrlCache.set(source, entry);
+  trimRenderableImageUrlCache();
+
+  return entry.url;
 }
 
 export async function resolveRenderableImageUrl(source: string) {
@@ -219,19 +253,32 @@ export async function resolveRenderableImageUrl(source: string) {
   }
 
   const pendingUrl = createRenderableImageUrl(source)
-    .then((result) => {
-      const entry: CachedRenderableImageUrl = {
-        url: result.url,
-        objectUrl: result.objectUrl ? result.url : null,
-        byteLength: result.byteLength,
-        lastUsed: ++renderableImageUrlCacheClock,
-      };
+    .then((result) => cacheRenderableImageUrl(source, result))
+    .finally(() => {
+      pendingRenderableImageUrls.delete(source);
+    });
 
-      renderableImageUrlCache.set(source, entry);
-      trimRenderableImageUrlCache();
+  pendingRenderableImageUrls.set(source, pendingUrl);
 
-      return result.url;
-    })
+  return pendingUrl;
+}
+
+async function resolveRenderableImageBlobUrl(source: string) {
+  const cached = renderableImageUrlCache.get(source);
+
+  if (cached?.objectUrl) {
+    touchCachedRenderableImage(source, cached);
+    return cached.url;
+  }
+
+  const pending = pendingRenderableImageUrls.get(source);
+
+  if (pending) {
+    return pending;
+  }
+
+  const pendingUrl = createRenderableImageBlobUrl(source)
+    .then((result) => cacheRenderableImageUrl(source, result))
     .finally(() => {
       pendingRenderableImageUrls.delete(source);
     });
@@ -250,6 +297,20 @@ export function getCachedRenderableImageElement(source: string) {
 
   touchCachedRenderableImageElement(source, cached);
   return cached.image;
+}
+
+function shouldSetAnonymousCrossOrigin(url: string) {
+  return (url.startsWith("http://") || url.startsWith("https://"))
+    && !url.startsWith("http://asset.localhost")
+    && !url.startsWith("https://asset.localhost");
+}
+
+function canFallbackToBlobUrl(source: string, attemptedUrl: string) {
+  return hasTauriRuntime() && isLikelyFilePath(source) && !attemptedUrl.startsWith("blob:");
+}
+
+function getInitialRenderableImageUrl(source: string) {
+  return hasTauriRuntime() && isLikelyFilePath(source) ? "" : source;
 }
 
 export async function loadRenderableImageElement(
@@ -292,8 +353,12 @@ export async function loadRenderableImageElement(
 
     return new Promise<HTMLImageElement | null>((resolve) => {
       const image = new window.Image();
+      let attemptedUrl = url;
+      let didFallbackToBlobUrl = false;
 
-      image.crossOrigin = "anonymous";
+      if (shouldSetAnonymousCrossOrigin(url)) {
+        image.crossOrigin = "anonymous";
+      }
       image.decoding = "async";
       image.onload = () => {
         touchCachedRenderableImageElement(source, {
@@ -303,7 +368,26 @@ export async function loadRenderableImageElement(
         trimRenderableImageElementCache();
         resolve(image);
       };
-      image.onerror = () => resolve(null);
+      image.onerror = () => {
+        if (!didFallbackToBlobUrl && canFallbackToBlobUrl(source, attemptedUrl)) {
+          didFallbackToBlobUrl = true;
+          void resolveRenderableImageBlobUrl(source)
+            .then((fallbackUrl) => {
+              if (!fallbackUrl || fallbackUrl === attemptedUrl) {
+                resolve(null);
+                return;
+              }
+
+              attemptedUrl = fallbackUrl;
+              image.removeAttribute("crossorigin");
+              image.src = fallbackUrl;
+            })
+            .catch(() => resolve(null));
+          return;
+        }
+
+        resolve(null);
+      };
       image.src = url;
     });
   }).finally(() => {
@@ -343,10 +427,11 @@ export async function preloadRenderableImages(
 }
 
 export function useRenderableImageUrl(source: string) {
-  const [resolvedSource, setResolvedSource] = useState(source);
+  const [resolvedSource, setResolvedSource] = useState(() => getInitialRenderableImageUrl(source));
 
   useEffect(() => {
     let cancelled = false;
+    setResolvedSource(getInitialRenderableImageUrl(source));
 
     const resolve = async () => {
       try {

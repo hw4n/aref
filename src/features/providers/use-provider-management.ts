@@ -34,11 +34,15 @@ export interface ProviderFamilyEntry {
   devOnly?: boolean;
 }
 
+interface UseProviderManagementOptions {
+  enabled?: boolean;
+}
+
 function selectProviderAdapter(providerId: string, providers: GenerationProviderAdapter[]) {
   return providers.find((provider) => provider.id === providerId) ?? null;
 }
 
-export function useProviderManagement() {
+export function useProviderManagement({ enabled = true }: UseProviderManagementOptions = {}) {
   const providers = useMemo(() => listGenerationProviders(), []);
   const generationDraft = useAppStore((state) => state.generationDraft);
   const uiPreferences = useAppStore((state) => state.uiPreferences);
@@ -53,7 +57,7 @@ export function useProviderManagement() {
     reload: reloadOpenAiSettings,
     save: saveOpenAiSettings,
     clear: clearOpenAiSettings,
-  } = useOpenAiSettings();
+  } = useOpenAiSettings({ enabled });
   const {
     snapshot: ima2SidecarSettings,
     status: ima2SidecarSettingsStatus,
@@ -64,7 +68,7 @@ export function useProviderManagement() {
     clear: clearIma2SidecarSettings,
     startProxy: startIma2SidecarProxy,
     startLogin: startIma2SidecarLogin,
-  } = useIma2SidecarSettings();
+  } = useIma2SidecarSettings({ enabled });
 
   const openAiAuthMethod = uiPreferences.providerAuthMethods.openai ?? "oauth";
   const openAiAvailabilityByMethod = useMemo(
@@ -158,6 +162,11 @@ export function useProviderManagement() {
   const oauthAutoStartSignatureRef = useRef<string | null>(null);
 
   useEffect(() => {
+    if (!enabled) {
+      oauthAutoStartSignatureRef.current = null;
+      return;
+    }
+
     if (!isDesktopIma2SidecarAvailable) {
       oauthAutoStartSignatureRef.current = null;
       return;
@@ -189,11 +198,16 @@ export function useProviderManagement() {
     ima2SidecarSettings.oauthStatus,
     ima2SidecarSettings.proxyManaged,
     ima2SidecarSettingsStatus,
+    enabled,
     isDesktopIma2SidecarAvailable,
     startIma2SidecarProxy,
   ]);
 
   useEffect(() => {
+    if (!enabled) {
+      return;
+    }
+
     if (!shouldPollOAuthSettings({
       snapshot: ima2SidecarSettings,
       isDesktop: isDesktopIma2SidecarAvailable,
@@ -212,11 +226,17 @@ export function useProviderManagement() {
     ima2SidecarSettings.oauthStatus,
     ima2SidecarSettings.proxyManaged,
     ima2SidecarSettingsStatus,
+    enabled,
     isDesktopIma2SidecarAvailable,
     reloadIma2SidecarSettings,
   ]);
 
   useEffect(() => {
+    if (!enabled) {
+      availabilitySignatureRef.current = null;
+      return;
+    }
+
     const signature = JSON.stringify({
       openAi: openAiAvailabilityByMethod["api-key"],
       oauth: openAiAvailabilityByMethod.oauth,
@@ -239,7 +259,7 @@ export function useProviderManagement() {
         mockAvailability.reason,
       ].join(" | "),
     });
-  }, [appendDiagnosticLog, mockAvailability, openAiAvailabilityByMethod]);
+  }, [appendDiagnosticLog, enabled, mockAvailability, openAiAvailabilityByMethod]);
 
   useEffect(() => {
     if (generationDraft.provider === "mock" && !uiPreferences.mockProviderEnabled) {

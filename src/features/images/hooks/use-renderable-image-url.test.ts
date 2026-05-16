@@ -1,6 +1,23 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { convertFileSrc } from "@tauri-apps/api/core";
+import { hasTauriRuntime } from "@/features/project/persistence/tauri-runtime";
+import { readManagedImageBytes } from "@/features/project/persistence/project-io";
 
-import { loadRenderableImageElement } from "./use-renderable-image-url";
+import { loadRenderableImageElement, resolveRenderableImageUrl } from "./use-renderable-image-url";
+
+vi.mock("@tauri-apps/api/core", () => ({
+  convertFileSrc: vi.fn((filePath: string) => `asset://localhost/${encodeURIComponent(filePath)}`),
+  isTauri: vi.fn(() => false),
+}));
+
+vi.mock("@/features/project/persistence/tauri-runtime", () => ({
+  hasTauriRuntime: vi.fn(() => false),
+}));
+
+vi.mock("@/features/project/persistence/project-io", () => ({
+  isLikelyFilePath: (value: string) => value.startsWith("/") || /^[A-Za-z]:[\\/]/.test(value),
+  readManagedImageBytes: vi.fn(async () => [1, 2, 3]),
+}));
 
 const originalImage = window.Image;
 
@@ -66,9 +83,21 @@ afterEach(() => {
     writable: true,
     value: originalImage,
   });
+  vi.mocked(hasTauriRuntime).mockReturnValue(false);
+  vi.clearAllMocks();
 });
 
 describe("renderable image element loading", () => {
+  it("uses Tauri asset URLs for local files without reading bytes through IPC", async () => {
+    vi.mocked(hasTauriRuntime).mockReturnValue(true);
+
+    const url = await resolveRenderableImageUrl("C:\\images\\full.png");
+
+    expect(url).toBe("asset://localhost/C%3A%5Cimages%5Cfull.png");
+    expect(convertFileSrc).toHaveBeenCalledWith("C:\\images\\full.png");
+    expect(readManagedImageBytes).not.toHaveBeenCalled();
+  });
+
   it("limits concurrent image element loads", async () => {
     const { pendingLoads, startedSources } = installImageLoadStub();
     const sources = Array.from({ length: 5 }, (_unused, index) => `concurrent-${index}.png`);

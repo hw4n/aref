@@ -15,12 +15,12 @@ import {
 
 type OpenAiSettingsStatus = "idle" | "loading" | "saving" | "error";
 
-export function useOpenAiSettings() {
+export function useOpenAiSettings({ enabled = true }: { enabled?: boolean } = {}) {
   const isDesktop = useMemo(() => hasTauriRuntime(), []);
   const [snapshot, setSnapshot] = useState<OpenAiSettingsSnapshot>(
     () => getBrowserOpenAiSettingsSnapshot(),
   );
-  const [status, setStatus] = useState<OpenAiSettingsStatus>(isDesktop ? "loading" : "idle");
+  const [status, setStatus] = useState<OpenAiSettingsStatus>(isDesktop && enabled ? "loading" : "idle");
   const [error, setError] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
@@ -43,8 +43,12 @@ export function useOpenAiSettings() {
   }, [isDesktop]);
 
   useEffect(() => {
+    if (!enabled) {
+      return;
+    }
+
     void reload();
-  }, [reload]);
+  }, [enabled, reload]);
 
   const save = useCallback(
     async (input: SaveOpenAiSettingsInput) => {

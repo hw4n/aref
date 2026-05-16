@@ -18,12 +18,12 @@ import {
 
 type Ima2SidecarSettingsStatus = "idle" | "loading" | "saving" | "error";
 
-export function useIma2SidecarSettings() {
+export function useIma2SidecarSettings({ enabled = true }: { enabled?: boolean } = {}) {
   const isDesktop = useMemo(() => hasTauriRuntime(), []);
   const [snapshot, setSnapshot] = useState<Ima2SidecarSettingsSnapshot>(
     () => getBrowserIma2SidecarSettingsSnapshot(),
   );
-  const [status, setStatus] = useState<Ima2SidecarSettingsStatus>(isDesktop ? "loading" : "idle");
+  const [status, setStatus] = useState<Ima2SidecarSettingsStatus>(isDesktop && enabled ? "loading" : "idle");
   const [error, setError] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
@@ -46,8 +46,12 @@ export function useIma2SidecarSettings() {
   }, [isDesktop]);
 
   useEffect(() => {
+    if (!enabled) {
+      return;
+    }
+
     void reload();
-  }, [reload]);
+  }, [enabled, reload]);
 
   const save = useCallback(
     async (input: SaveIma2SidecarSettingsInput) => {

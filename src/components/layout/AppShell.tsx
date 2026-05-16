@@ -173,8 +173,10 @@ export function AppShell() {
   const { submitGeneration, cancelGeneration, rerunGeneration } = useGenerationHarness({
     onGenerationCompleted: saveAutosaveNow,
   });
-  const providerManagement = useProviderManagement();
   const showGenerationSheet = shouldShowContextualGenerationSheet(referenceSelectionCount, isGenerationSheetExplicitlyOpened);
+  const providerManagement = useProviderManagement({
+    enabled: settingsOpen || showGenerationSheet,
+  });
   const photoAssets = useMemo(
     () =>
       Object.values(projectAssets)
