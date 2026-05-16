@@ -273,6 +273,41 @@ export function SourceIcon(props: IconProps) {
   );
 }
 
+export function PhotoViewerIcon(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <rect height="15" rx="2" width="18" x="3" y="5" />
+      <circle cx="8" cy="10" r="1.4" />
+      <path d="m5.5 17 4.2-4.2 3.3 3.3 2.1-2.1 3.4 3.4" />
+    </IconBase>
+  );
+}
+
+export function ChevronLeftIcon(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="m15 18-6-6 6-6" />
+    </IconBase>
+  );
+}
+
+export function ChevronRightIcon(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="m9 6 6 6-6 6" />
+    </IconBase>
+  );
+}
+
+export function CloseIcon(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="M6 6l12 12" />
+      <path d="M18 6 6 18" />
+    </IconBase>
+  );
+}
+
 export function SizeIcon(props: IconProps) {
   return (
     <IconBase {...props}>

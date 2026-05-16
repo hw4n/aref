@@ -16,6 +16,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             clipboard_files::write_image_files_to_clipboard,
             project_persistence::import_chatgpt_share_images,
+            project_persistence::export_image_files,
             project_persistence::ingest_image_asset,
             project_persistence::read_image_bytes,
             project_persistence::load_project_file,

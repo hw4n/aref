@@ -7,6 +7,7 @@ import {
   OpenProjectIcon,
   PanelLeftIcon,
   PanelRightIcon,
+  PhotoViewerIcon,
   SaveAsIcon,
   SaveIcon,
   SourceIcon,
@@ -14,13 +15,19 @@ import {
 import { DeveloperLogDrawer } from "@/components/layout/DeveloperLogDrawer";
 import { InspectorPanel } from "@/components/layout/InspectorPanel";
 import { LeftSidebar } from "@/components/layout/LeftSidebar";
+import { PhotoViewerDialog } from "@/components/layout/PhotoViewerDialog";
 import { ToastViewport } from "@/components/layout/ToastViewport";
 import { ToolbarRail } from "@/components/layout/ToolbarRail";
+import { isImageAsset } from "@/domain/assets/types";
 import { ContextualGenerationSheet } from "@/features/ai/components/ContextualGenerationSheet";
 import { shouldShowContextualGenerationSheet } from "@/features/ai/contextual-sheet";
 import { useGenerationHarness } from "@/features/ai/use-generation-harness";
 import { loadImageFiles, loadImagePaths } from "@/features/import/utils/load-image-files";
-import { importChatGptShareImages } from "@/features/project/persistence/project-io";
+import {
+  chooseImageExportDirectory,
+  exportImageAssetsToDirectory,
+  importChatGptShareImages,
+} from "@/features/project/persistence/project-io";
 import { useProjectPersistence } from "@/features/project/persistence/use-project-persistence";
 import { getProjectDisplayName } from "@/features/project/persistence/project-title";
 import { useWindowImageDrop } from "@/features/import/hooks/use-window-image-drop";
@@ -87,8 +94,13 @@ export function AppShell() {
   const [chatGptImportDialogOpen, setChatGptImportDialogOpen] = useState(false);
   const [chatGptShareUrl, setChatGptShareUrl] = useState("");
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [photoViewerAssetId, setPhotoViewerAssetId] = useState<string | null>(null);
+  const [selectedPhotoAssetIds, setSelectedPhotoAssetIds] = useState<string[]>([]);
+  const [isPhotoExporting, setIsPhotoExporting] = useState(false);
   const importAssets = useAppStore((state) => state.importAssets);
   const projectName = useAppStore((state) => state.project.name);
+  const projectAssets = useAppStore((state) => state.project.assets);
+  const selectedAssetIds = useAppStore((state) => state.project.selection.assetIds);
   const activeProviderId = useAppStore((state) => state.generationDraft.provider);
   const areLogsVisible = useAppStore((state) => state.uiPreferences.developerMode && state.uiPreferences.logsVisible);
   const leftRailOpen = useAppStore((state) => state.uiPreferences.leftRailOpen);
@@ -129,6 +141,23 @@ export function AppShell() {
   });
   const providerManagement = useProviderManagement();
   const showGenerationSheet = shouldShowContextualGenerationSheet(referenceSelectionCount, isGenerationSheetExplicitlyOpened);
+  const photoAssets = useMemo(
+    () =>
+      Object.values(projectAssets)
+        .filter(isImageAsset)
+        .sort((left, right) => left.zIndex - right.zIndex),
+    [projectAssets],
+  );
+  const photoViewerIndex = photoViewerAssetId
+    ? photoAssets.findIndex((asset) => asset.id === photoViewerAssetId)
+    : -1;
+  const photoViewerAsset = photoViewerIndex >= 0 ? photoAssets[photoViewerIndex] : null;
+  const selectedPhotoAssets = useMemo(
+    () => selectedPhotoAssetIds
+      .map((assetId) => photoAssets.find((asset) => asset.id === assetId))
+      .filter((asset): asset is (typeof photoAssets)[number] => Boolean(asset)),
+    [photoAssets, selectedPhotoAssetIds],
+  );
 
   const handleImportFiles = useCallback(
     async (files: File[]) => {
@@ -185,6 +214,80 @@ export function AppShell() {
     setChatGptImportDialogOpen(true);
   }, []);
 
+  const openPhotoViewer = useCallback(() => {
+    const selectedPhotoAssetId = selectedAssetIds.find((assetId) =>
+      photoAssets.some((asset) => asset.id === assetId),
+    );
+
+    setPhotoViewerAssetId(selectedPhotoAssetId ?? photoAssets[0]?.id ?? null);
+  }, [photoAssets, selectedAssetIds]);
+
+  const showPreviousPhoto = useCallback(() => {
+    setPhotoViewerAssetId((currentAssetId) => {
+      const currentIndex = photoAssets.findIndex((asset) => asset.id === currentAssetId);
+
+      if (currentIndex <= 0) {
+        return currentAssetId;
+      }
+
+      return photoAssets[currentIndex - 1]?.id ?? currentAssetId;
+    });
+  }, [photoAssets]);
+
+  const showNextPhoto = useCallback(() => {
+    setPhotoViewerAssetId((currentAssetId) => {
+      const currentIndex = photoAssets.findIndex((asset) => asset.id === currentAssetId);
+
+      if (currentIndex < 0 || currentIndex >= photoAssets.length - 1) {
+        return currentAssetId;
+      }
+
+      return photoAssets[currentIndex + 1]?.id ?? currentAssetId;
+    });
+  }, [photoAssets]);
+
+  const togglePhotoSelection = useCallback((assetId: string) => {
+    setSelectedPhotoAssetIds((currentIds) =>
+      currentIds.includes(assetId)
+        ? currentIds.filter((id) => id !== assetId)
+        : [...currentIds, assetId],
+    );
+  }, []);
+
+  const selectPhotoByIndex = useCallback((index: number) => {
+    setPhotoViewerAssetId(photoAssets[index]?.id ?? null);
+  }, [photoAssets]);
+
+  const exportSelectedPhotos = useCallback(async () => {
+    if (selectedPhotoAssets.length === 0 || isPhotoExporting) {
+      return;
+    }
+
+    try {
+      const directory = await chooseImageExportDirectory();
+
+      if (!directory) {
+        return;
+      }
+
+      setIsPhotoExporting(true);
+      const result = await exportImageAssetsToDirectory(selectedPhotoAssets, directory);
+      pushToast({
+        kind: "success",
+        title: "Images exported",
+        description: `${result.exportedCount} image${result.exportedCount === 1 ? "" : "s"} written to ${result.directory}.`,
+      });
+    } catch (error) {
+      pushToast({
+        kind: "error",
+        title: "Export failed",
+        description: error instanceof Error ? error.message : "Could not export selected images.",
+      });
+    } finally {
+      setIsPhotoExporting(false);
+    }
+  }, [isPhotoExporting, pushToast, selectedPhotoAssets]);
+
   const handleImportFromChatGpt = useCallback(async () => {
     const shareUrl = chatGptShareUrl.trim();
 
@@ -237,6 +340,29 @@ export function AppShell() {
       window.removeEventListener("keydown", onKeyDown);
     };
   }, [chatGptImportDialogOpen, isChatGptImporting]);
+
+  useEffect(() => {
+    if (!photoViewerAssetId) {
+      return;
+    }
+
+    if (photoAssets.length === 0) {
+      setPhotoViewerAssetId(null);
+      return;
+    }
+
+    if (!photoAssets.some((asset) => asset.id === photoViewerAssetId)) {
+      setPhotoViewerAssetId(photoAssets[0]?.id ?? null);
+    }
+  }, [photoAssets, photoViewerAssetId]);
+
+  useEffect(() => {
+    setSelectedPhotoAssetIds((currentIds) => {
+      const nextIds = currentIds.filter((assetId) => photoAssets.some((asset) => asset.id === assetId));
+
+      return nextIds.length === currentIds.length ? currentIds : nextIds;
+    });
+  }, [photoAssets]);
 
   useEffect(() => {
     const syncFullscreenState = () => {
@@ -393,6 +519,12 @@ export function AppShell() {
       icon: <SourceIcon size={15} />,
       onClick: openChatGptImportDialog,
       disabled: !isDesktopPersistenceAvailable || isImporting,
+    },
+    {
+      label: "Photos",
+      icon: <PhotoViewerIcon size={15} />,
+      onClick: openPhotoViewer,
+      disabled: photoAssets.length === 0,
     },
   ];
 
@@ -644,6 +776,25 @@ export function AppShell() {
             </div>
           </form>
         </div>
+      ) : null}
+      {photoViewerAsset ? (
+        <PhotoViewerDialog
+          asset={photoViewerAsset}
+          assets={photoAssets}
+          currentIndex={photoViewerIndex}
+          totalCount={photoAssets.length}
+          hasPrevious={photoViewerIndex > 0}
+          hasNext={photoViewerIndex >= 0 && photoViewerIndex < photoAssets.length - 1}
+          canExport={isDesktopPersistenceAvailable}
+          isExporting={isPhotoExporting}
+          selectedAssetIds={selectedPhotoAssetIds}
+          onClose={() => setPhotoViewerAssetId(null)}
+          onExportSelected={() => void exportSelectedPhotos()}
+          onNext={showNextPhoto}
+          onSelectIndex={selectPhotoByIndex}
+          onPrevious={showPreviousPhoto}
+          onToggleSelection={togglePhotoSelection}
+        />
       ) : null}
       <main className={workspaceClassName}>
         <header className="workspace__header">

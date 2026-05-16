@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 
 import type { ImportedImageDraft } from "@/domain/assets/imported-asset-utils";
-import { isImageAsset } from "@/domain/assets/types";
+import { isImageAsset, type ImageAssetItem } from "@/domain/assets/types";
 import type { Project } from "@/domain/project/types";
 import {
   createImageThumbnailBlob,
@@ -242,6 +242,20 @@ export async function chooseSaveProjectPath(projectName: string, currentProjectP
   });
 }
 
+export async function chooseImageExportDirectory() {
+  if (!hasTauriRuntime()) {
+    return null;
+  }
+
+  const selected = await open({
+    multiple: false,
+    directory: true,
+    title: "Export selected images",
+  });
+
+  return typeof selected === "string" ? selected : null;
+}
+
 export async function ingestImportedFile(file: File): Promise<ImportedImageDraft> {
   const transientUrl = URL.createObjectURL(file);
 
@@ -293,6 +307,67 @@ export async function writeImageFilesToClipboard(files: ClipboardImageFileDraft[
   }
 
   return invoke<number>("write_image_files_to_clipboard", { files });
+}
+
+interface ExportImageFilesResult {
+  directory: string;
+  exportedCount: number;
+  paths: string[];
+}
+
+function getExportImageFilename(asset: ImageAssetItem, index: number) {
+  const sourceName = asset.sourceName?.split(/[\\/]/).at(-1)?.trim();
+  const extension = guessExtension(asset.sourceName, asset.imagePath);
+
+  if (sourceName && sourceName.includes(".")) {
+    return sourceName;
+  }
+
+  if (sourceName) {
+    return `${sourceName}.${extension}`;
+  }
+
+  return `${String(index + 1).padStart(3, "0")}-${asset.id}.${extension}`;
+}
+
+export async function exportImageAssetsToDirectory(
+  assets: ImageAssetItem[],
+  directory: string,
+): Promise<ExportImageFilesResult> {
+  if (!hasTauriRuntime()) {
+    throw new Error("Image export is only available in the desktop app.");
+  }
+
+  const files = await Promise.all(
+    assets.map(async (asset, index) => {
+      const filename = getExportImageFilename(asset, index);
+
+      if (isLikelyFilePath(asset.imagePath)) {
+        return {
+          filename,
+          source: {
+            kind: "path" as const,
+            path: asset.imagePath,
+          },
+        };
+      }
+
+      return {
+        filename,
+        source: {
+          kind: "bytes" as const,
+          bytes: await toBytes(asset.imagePath),
+        },
+      };
+    }),
+  );
+
+  return invoke<ExportImageFilesResult>("export_image_files", {
+    request: {
+      directory,
+      files,
+    },
+  });
 }
 
 export async function importChatGptShareImages(url: string): Promise<ChatGptShareImportResult> {

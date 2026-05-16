@@ -101,6 +101,35 @@ pub struct SaveAutosaveRequest {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ExportImageFilesRequest {
+    directory: String,
+    files: Vec<ExportImageFilePayload>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportImageFilePayload {
+    filename: String,
+    source: ExportImageSource,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ExportImageSource {
+    Path { path: String },
+    Bytes { bytes: Vec<u8> },
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportImageFilesResult {
+    directory: String,
+    exported_count: usize,
+    paths: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ProjectAssetSourcePayload {
     asset_id: String,
     image: PersistedAssetSource,
@@ -493,6 +522,80 @@ fn infer_extension(source: &PersistedAssetSource) -> String {
             .and_then(|value| Path::new(value).extension().and_then(|ext| ext.to_str()))
             .and_then(sanitize_extension)
             .unwrap_or_else(|| "png".to_string()),
+    }
+}
+
+fn sanitize_export_file_stem(value: &str) -> String {
+    let sanitized = value
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || character == '-' || character == '_' {
+                character
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+    let collapsed = sanitized
+        .split('-')
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>()
+        .join("-");
+
+    if collapsed.is_empty() {
+        "image".to_string()
+    } else {
+        collapsed.chars().take(96).collect()
+    }
+}
+
+fn export_extension(filename: &str, source: &ExportImageSource) -> String {
+    Path::new(filename)
+        .extension()
+        .and_then(|value| value.to_str())
+        .and_then(sanitize_extension)
+        .or_else(|| match source {
+            ExportImageSource::Path { path } => Path::new(path)
+                .extension()
+                .and_then(|value| value.to_str())
+                .and_then(sanitize_extension),
+            ExportImageSource::Bytes { .. } => None,
+        })
+        .unwrap_or_else(|| "png".to_string())
+}
+
+fn export_file_stem(filename: &str, index: usize) -> String {
+    let fallback = format!("image-{}", index + 1);
+    let raw_stem = Path::new(filename)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or(&fallback);
+
+    sanitize_export_file_stem(raw_stem)
+}
+
+fn unique_export_filename(
+    file: &ExportImageFilePayload,
+    index: usize,
+    used_names: &mut BTreeSet<String>,
+) -> String {
+    let stem = export_file_stem(&file.filename, index);
+    let extension = export_extension(&file.filename, &file.source);
+    let mut suffix = 1;
+
+    loop {
+        let candidate = if suffix == 1 {
+            format!("{stem}.{extension}")
+        } else {
+            format!("{stem}-{suffix}.{extension}")
+        };
+        let key = candidate.to_ascii_lowercase();
+
+        if used_names.insert(key) {
+            return candidate;
+        }
+
+        suffix += 1;
     }
 }
 
@@ -1561,6 +1664,50 @@ pub fn read_image_bytes(path: String) -> Result<Vec<u8>, String> {
 }
 
 #[tauri::command]
+pub fn export_image_files(
+    request: ExportImageFilesRequest,
+) -> Result<ExportImageFilesResult, String> {
+    let directory = PathBuf::from(&request.directory);
+    fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+
+    if !directory.is_dir() {
+        return Err(format!(
+            "Export target is not a directory: {}",
+            normalize_path(&directory)
+        ));
+    }
+
+    let mut used_names = BTreeSet::new();
+    let mut paths = Vec::with_capacity(request.files.len());
+
+    for (index, file) in request.files.iter().enumerate() {
+        let target_path = directory.join(unique_export_filename(file, index, &mut used_names));
+
+        match &file.source {
+            ExportImageSource::Path { path } => {
+                fs::copy(path, &target_path).map_err(|error| {
+                    format!(
+                        "Failed to export {}: {error}",
+                        normalize_path(Path::new(path))
+                    )
+                })?;
+            }
+            ExportImageSource::Bytes { bytes } => {
+                fs::write(&target_path, bytes).map_err(|error| error.to_string())?;
+            }
+        }
+
+        paths.push(normalize_path(&target_path));
+    }
+
+    Ok(ExportImageFilesResult {
+        directory: normalize_path(&directory),
+        exported_count: paths.len(),
+        paths,
+    })
+}
+
+#[tauri::command]
 pub fn load_project_file(app: AppHandle, path: String) -> Result<ProjectPersistenceHandle, String> {
     let project_path = PathBuf::from(&path);
     let handle = load_project_file_internal(Some(&app), &project_path)?;
@@ -1743,6 +1890,50 @@ mod tests {
         );
 
         fs::remove_dir_all(&temp_dir).expect("remove temp dir");
+    }
+
+    #[test]
+    fn exports_image_files_with_sanitized_unique_names() {
+        let temp_dir = std::env::temp_dir().join(format!("aref-export-{}", Uuid::new_v4()));
+        let source_path = temp_dir.join("source image.jpg");
+        let export_dir = temp_dir.join("exports");
+        fs::create_dir_all(&temp_dir).expect("create temp dir");
+        fs::write(&source_path, vec![1, 2, 3]).expect("write source");
+
+        let result = export_image_files(ExportImageFilesRequest {
+            directory: normalize_path(&export_dir),
+            files: vec![
+                ExportImageFilePayload {
+                    filename: "../source image.jpg".to_string(),
+                    source: ExportImageSource::Path {
+                        path: normalize_path(&source_path),
+                    },
+                },
+                ExportImageFilePayload {
+                    filename: "../source image.jpg".to_string(),
+                    source: ExportImageSource::Bytes {
+                        bytes: vec![4, 5, 6],
+                    },
+                },
+            ],
+        })
+        .expect("export images");
+
+        assert_eq!(result.exported_count, 2);
+        assert_eq!(
+            fs::read(export_dir.join("source-image.jpg")).unwrap(),
+            vec![1, 2, 3]
+        );
+        assert_eq!(
+            fs::read(export_dir.join("source-image-2.jpg")).unwrap(),
+            vec![4, 5, 6]
+        );
+        assert!(result
+            .paths
+            .iter()
+            .all(|path| path.contains("source-image")));
+
+        fs::remove_dir_all(temp_dir).expect("cleanup temp directory");
     }
 
     #[test]
