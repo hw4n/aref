@@ -44,7 +44,6 @@ import {
   CANVAS_RETAIN_OVERSCAN_SCREENS,
   CANVAS_RENDER_OVERSCAN_SCREENS,
   assetIntersectsViewport,
-  getCameraCullingAnchor,
   getCameraOverscanViewport,
   getStableRenderAssetIds,
 } from "@/features/canvas/utils/viewport-rendering";
@@ -1101,42 +1100,17 @@ function CanvasStageComponent({ onCancelGeneration }: CanvasStageProps = {}) {
     hasMarqueeSession: Boolean(marqueeSession),
   });
   const canvasPixelRatio = getCanvasDevicePixelRatio();
-  const cullingAnchor = getCameraCullingAnchor(camera);
   const renderViewport = useMemo(
-    () =>
-      getCameraOverscanViewport(
-        {
-          ...camera,
-          x: cullingAnchor.x,
-          y: cullingAnchor.y,
-        },
-        CANVAS_RENDER_OVERSCAN_SCREENS,
-      ),
-    [camera.zoom, camera.viewportHeight, camera.viewportWidth, cullingAnchor.x, cullingAnchor.y],
+    () => getCameraOverscanViewport(camera, CANVAS_RENDER_OVERSCAN_SCREENS),
+    [camera.x, camera.y, camera.zoom, camera.viewportHeight, camera.viewportWidth],
   );
   const preloadViewport = useMemo(
-    () =>
-      getCameraOverscanViewport(
-        {
-          ...camera,
-          x: cullingAnchor.x,
-          y: cullingAnchor.y,
-        },
-        CANVAS_PRELOAD_OVERSCAN_SCREENS,
-      ),
-    [camera.zoom, camera.viewportHeight, camera.viewportWidth, cullingAnchor.x, cullingAnchor.y],
+    () => getCameraOverscanViewport(camera, CANVAS_PRELOAD_OVERSCAN_SCREENS),
+    [camera.x, camera.y, camera.zoom, camera.viewportHeight, camera.viewportWidth],
   );
   const retainViewport = useMemo(
-    () =>
-      getCameraOverscanViewport(
-        {
-          ...camera,
-          x: cullingAnchor.x,
-          y: cullingAnchor.y,
-        },
-        CANVAS_RETAIN_OVERSCAN_SCREENS,
-      ),
-    [camera.zoom, camera.viewportHeight, camera.viewportWidth, cullingAnchor.x, cullingAnchor.y],
+    () => getCameraOverscanViewport(camera, CANVAS_RETAIN_OVERSCAN_SCREENS),
+    [camera.x, camera.y, camera.zoom, camera.viewportHeight, camera.viewportWidth],
   );
   const targetRenderAssetIds = useMemo(
     () =>

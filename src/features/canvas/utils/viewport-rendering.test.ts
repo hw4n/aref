@@ -6,7 +6,6 @@ import type { CameraState } from "@/domain/camera/types";
 import {
   assetIntersectsViewport,
   expandRect,
-  getCameraCullingAnchor,
   getCameraOverscanViewport,
   getStableRenderAssetIds,
   getCameraWorldViewport,
@@ -71,20 +70,24 @@ describe("viewport rendering", () => {
     });
   });
 
-  it("quantizes camera movement for viewport culling", () => {
-    expect(getCameraCullingAnchor(createCamera({
+  it("tracks small camera movements exactly for render culling", () => {
+    const beforePan = getCameraOverscanViewport(createCamera({
       x: 240,
       y: 180,
+      zoom: 1,
       viewportWidth: 1000,
       viewportHeight: 800,
-    }))).toEqual({ x: 0, y: 0 });
-
-    expect(getCameraCullingAnchor(createCamera({
+    }), 1);
+    const afterPan = getCameraOverscanViewport(createCamera({
       x: 260,
       y: 240,
+      zoom: 1,
       viewportWidth: 1000,
       viewportHeight: 800,
-    }))).toEqual({ x: 500, y: 400 });
+    }), 1);
+
+    expect(afterPan.x - beforePan.x).toBe(-20);
+    expect(afterPan.y - beforePan.y).toBe(-60);
   });
 
   it("detects assets that intersect the viewport", () => {
