@@ -35,6 +35,7 @@ import { useCanvasShortcuts } from "@/features/canvas/hooks/use-canvas-shortcuts
 import { useStageContainerSize } from "@/features/canvas/hooks/use-stage-container-size";
 import {
   CANVAS_RENDER_SETTLE_MS,
+  getCanvasImagePreloadSources,
   getCanvasRenderMode,
   shouldUseCanvasPreviewImage,
   type CanvasRenderMode,
@@ -43,9 +44,9 @@ import {
   CANVAS_PRELOAD_OVERSCAN_SCREENS,
   CANVAS_RETAIN_OVERSCAN_SCREENS,
   CANVAS_RENDER_OVERSCAN_SCREENS,
-  assetIntersectsViewport,
   getCameraOverscanViewport,
   getStableRenderAssetIds,
+  getViewportRenderAssetPlan,
 } from "@/features/canvas/utils/viewport-rendering";
 import {
   copyAssetsToClipboard,
@@ -1120,30 +1121,44 @@ function CanvasStageComponent({ onCancelGeneration }: CanvasStageProps = {}) {
     () => getCameraOverscanViewport(camera, CANVAS_RETAIN_OVERSCAN_SCREENS),
     [camera.x, camera.y, camera.zoom, camera.viewportHeight, camera.viewportWidth],
   );
-  const targetRenderAssetIds = useMemo(
+  const viewportRenderAssetPlan = useMemo(
     () =>
-      assets
-        .filter(
-          (asset) =>
-            selectedAssetSet.has(asset.id) ||
-            editingTextAssetId === asset.id ||
-            assetIntersectsViewport(asset, renderViewport),
-        )
-        .map((asset) => asset.id),
-    [assets, editingTextAssetId, renderViewport, selectedAssetSet],
+      getViewportRenderAssetPlan({
+        assets,
+        renderViewport,
+        retainViewport,
+        preloadViewport,
+        selectedAssetIds: selectedAssetSet,
+        editingTextAssetId,
+        getPreloadSources: (asset, context) => {
+          if (!isImageAsset(asset)) {
+            return [];
+          }
+
+          const renderedMaxDimension = getAssetRenderedMaxDimension(asset, camera.zoom, canvasPixelRatio);
+
+          return getCanvasImagePreloadSources({
+            asset,
+            renderMode,
+            renderedMaxDimension,
+            intersectsRenderViewport: context.intersectsRenderViewport,
+            isPinned: context.isPinned,
+          });
+        },
+      }),
+    [
+      assets,
+      camera.zoom,
+      canvasPixelRatio,
+      editingTextAssetId,
+      preloadViewport,
+      renderMode,
+      renderViewport,
+      retainViewport,
+      selectedAssetSet,
+    ],
   );
-  const retainedRenderAssetIds = useMemo(
-    () =>
-      assets
-        .filter(
-          (asset) =>
-            selectedAssetSet.has(asset.id) ||
-            editingTextAssetId === asset.id ||
-            assetIntersectsViewport(asset, retainViewport),
-        )
-        .map((asset) => asset.id),
-    [assets, editingTextAssetId, retainViewport, selectedAssetSet],
-  );
+  const { targetRenderAssetIds, retainedRenderAssetIds, preloadSources } = viewportRenderAssetPlan;
   const targetRenderAssetIdKey = targetRenderAssetIds.join("|");
   const retainedRenderAssetIdKey = retainedRenderAssetIds.join("|");
   const renderAssetIdSet = useMemo(() => {
@@ -1159,28 +1174,15 @@ function CanvasStageComponent({ onCancelGeneration }: CanvasStageProps = {}) {
     () => assets.filter((asset) => renderAssetIdSet.has(asset.id)),
     [assets, renderAssetIdSet],
   );
-  const preloadSources = useMemo(() => {
-    const sources = new Set<string>();
-
-    for (const asset of assets) {
-      if (!isImageAsset(asset) || !assetIntersectsViewport(asset, preloadViewport)) {
-        continue;
-      }
-
-      if (asset.thumbnailPath) {
-        sources.add(asset.thumbnailPath);
-      }
-
-      const renderedMaxDimension = getAssetRenderedMaxDimension(asset, camera.zoom, canvasPixelRatio);
-      const shouldUsePreviewImage = shouldUseCanvasPreviewImage(asset, renderMode, renderedMaxDimension);
-
-      if (!shouldUsePreviewImage && (renderMode === "settled" || assetIntersectsViewport(asset, renderViewport))) {
-        sources.add(asset.imagePath);
-      }
-    }
-
-    return [...sources];
-  }, [assets, camera.zoom, canvasPixelRatio, preloadViewport, renderMode, renderViewport]);
+  const renderGenerationJobs = useMemo(
+    () =>
+      activeGenerationJobs.filter(
+        (job) =>
+          selectedGenerationJobSet.has(job.id)
+          || rectsIntersect(getGenerationJobBounds(job), renderViewport),
+      ),
+    [activeGenerationJobs, renderViewport, selectedGenerationJobSet],
+  );
   const visibleAssetNodeKey = useMemo(
     () =>
       renderAssets
@@ -1413,7 +1415,7 @@ function CanvasStageComponent({ onCancelGeneration }: CanvasStageProps = {}) {
   }, [preloadSources, renderMode]);
 
   useEffect(() => {
-    if (activeGenerationJobs.length === 0 || renderMode === "interactive") {
+    if (renderGenerationJobs.length === 0 || renderMode === "interactive") {
       setGenerationAnimationTick(0);
       return;
     }
@@ -1423,7 +1425,7 @@ function CanvasStageComponent({ onCancelGeneration }: CanvasStageProps = {}) {
     }, 180);
 
     return () => window.clearInterval(intervalId);
-  }, [activeGenerationJobs.length, renderMode]);
+  }, [renderGenerationJobs.length, renderMode]);
 
   useEffect(() => {
     const updateRotationSnapModifier = (pressed: boolean) => {
@@ -2208,7 +2210,7 @@ function CanvasStageComponent({ onCancelGeneration }: CanvasStageProps = {}) {
             </Layer>
 
             <Layer>
-              {activeGenerationJobs.map((job) => {
+              {renderGenerationJobs.map((job) => {
                 const previewPosition = generationJobDragPreviewPositionsRef.current?.[job.id];
                 const displayJob = previewPosition
                   ? {

@@ -42,6 +42,79 @@ export function assetIntersectsViewport(asset: AssetItem, viewport: Rect) {
   return rectsIntersect(getAssetBounds(asset), viewport);
 }
 
+export interface ViewportRenderAssetPlanPreloadContext {
+  intersectsRenderViewport: boolean;
+  intersectsPreloadViewport: boolean;
+  isPinned: boolean;
+}
+
+export interface ViewportRenderAssetPlan {
+  targetRenderAssetIds: string[];
+  retainedRenderAssetIds: string[];
+  preloadSources: string[];
+}
+
+export function getViewportRenderAssetPlan({
+  assets,
+  renderViewport,
+  retainViewport,
+  preloadViewport,
+  selectedAssetIds,
+  editingTextAssetId,
+  getPreloadSources,
+  getBounds = getAssetBounds,
+}: {
+  assets: readonly AssetItem[];
+  renderViewport: Rect;
+  retainViewport: Rect;
+  preloadViewport: Rect;
+  selectedAssetIds: ReadonlySet<string>;
+  editingTextAssetId: string | null;
+  getPreloadSources?: (
+    asset: AssetItem,
+    context: ViewportRenderAssetPlanPreloadContext,
+  ) => readonly string[];
+  getBounds?: (asset: AssetItem) => Rect;
+}): ViewportRenderAssetPlan {
+  const targetRenderAssetIds: string[] = [];
+  const retainedRenderAssetIds: string[] = [];
+  const preloadSources = new Set<string>();
+
+  for (const asset of assets) {
+    const bounds = getBounds(asset);
+    const isPinned = selectedAssetIds.has(asset.id) || editingTextAssetId === asset.id;
+    const intersectsRenderViewport = rectsIntersect(bounds, renderViewport);
+    const intersectsRetainViewport = intersectsRenderViewport || rectsIntersect(bounds, retainViewport);
+    const intersectsPreloadViewport = rectsIntersect(bounds, preloadViewport);
+
+    if (isPinned || intersectsRenderViewport) {
+      targetRenderAssetIds.push(asset.id);
+    }
+
+    if (isPinned || intersectsRetainViewport) {
+      retainedRenderAssetIds.push(asset.id);
+    }
+
+    if (getPreloadSources && intersectsPreloadViewport) {
+      for (const source of getPreloadSources(asset, {
+        intersectsRenderViewport,
+        intersectsPreloadViewport,
+        isPinned,
+      })) {
+        if (source) {
+          preloadSources.add(source);
+        }
+      }
+    }
+  }
+
+  return {
+    targetRenderAssetIds,
+    retainedRenderAssetIds,
+    preloadSources: [...preloadSources],
+  };
+}
+
 export function getStableRenderAssetIds({
   currentIds,
   targetIds,

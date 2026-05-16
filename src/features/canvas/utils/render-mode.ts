@@ -31,3 +31,35 @@ export function shouldUseCanvasPreviewImage(
       || renderedMaxDimension <= CANVAS_SETTLED_PREVIEW_MAX_RENDERED_DIMENSION
     );
 }
+
+export function getCanvasImagePreloadSources({
+  asset,
+  renderMode,
+  renderedMaxDimension,
+  intersectsRenderViewport,
+  isPinned,
+}: {
+  asset: AssetItem;
+  renderMode: CanvasRenderMode;
+  renderedMaxDimension: number;
+  intersectsRenderViewport: boolean;
+  isPinned: boolean;
+}) {
+  if (!isImageAsset(asset)) {
+    return [];
+  }
+
+  const sources: string[] = [];
+
+  if (asset.thumbnailPath) {
+    sources.push(asset.thumbnailPath);
+  }
+
+  const usesPreviewImage = shouldUseCanvasPreviewImage(asset, renderMode, renderedMaxDimension);
+
+  if (!usesPreviewImage && (intersectsRenderViewport || isPinned)) {
+    sources.push(asset.imagePath);
+  }
+
+  return sources;
+}

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { AssetItem } from "@/domain/assets/types";
 import type { CameraState } from "@/domain/camera/types";
@@ -9,6 +9,7 @@ import {
   getCameraOverscanViewport,
   getStableRenderAssetIds,
   getCameraWorldViewport,
+  getViewportRenderAssetPlan,
 } from "./viewport-rendering";
 
 function createCamera(partial: Partial<CameraState> = {}): CameraState {
@@ -113,5 +114,43 @@ describe("viewport rendering", () => {
       retainedIds: ["near-old", "new"],
       pruneToTarget: true,
     })).toEqual(["new"]);
+  });
+
+  it("builds render and preload ids with one bounds pass per asset", () => {
+    const assets = [
+      createAsset({ id: "visible", x: 0 }),
+      createAsset({ id: "retained", x: 300 }),
+      createAsset({ id: "preload-only", x: 650 }),
+      createAsset({ id: "far", x: 1200 }),
+      createAsset({ id: "selected", x: 1400 }),
+    ];
+    const getBounds = vi.fn((asset: AssetItem) => ({
+      x: asset.x - (asset.width * asset.scale) / 2,
+      y: asset.y - (asset.height * asset.scale) / 2,
+      width: asset.width * asset.scale,
+      height: asset.height * asset.scale,
+    }));
+
+    const plan = getViewportRenderAssetPlan({
+      assets,
+      renderViewport: { x: -100, y: -100, width: 200, height: 200 },
+      retainViewport: { x: -300, y: -100, width: 600, height: 200 },
+      preloadViewport: { x: -700, y: -100, width: 1400, height: 200 },
+      selectedAssetIds: new Set(["selected"]),
+      editingTextAssetId: null,
+      getPreloadSources: (asset, context) => [
+        `${asset.id}:${context.intersectsRenderViewport ? "render" : "preload"}`,
+      ],
+      getBounds,
+    });
+
+    expect(getBounds).toHaveBeenCalledTimes(assets.length);
+    expect(plan.targetRenderAssetIds).toEqual(["visible", "selected"]);
+    expect(plan.retainedRenderAssetIds).toEqual(["visible", "retained", "selected"]);
+    expect(plan.preloadSources).toEqual([
+      "visible:render",
+      "retained:preload",
+      "preload-only:preload",
+    ]);
   });
 });

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { ImageAssetItem, TextAssetItem } from "@/domain/assets/types";
 
 import {
+  getCanvasImagePreloadSources,
   getCanvasRenderMode,
   shouldUseCanvasPreviewImage,
 } from "./render-mode";
@@ -84,5 +85,31 @@ describe("canvas render mode", () => {
     expect(shouldUseCanvasPreviewImage(imageAsset, "settled", 513)).toBe(false);
     expect(shouldUseCanvasPreviewImage({ ...imageAsset, thumbnailPath: null }, "interactive")).toBe(false);
     expect(shouldUseCanvasPreviewImage(textAsset, "interactive")).toBe(false);
+  });
+
+  it("preloads full-size images only when they are actually rendered", () => {
+    expect(getCanvasImagePreloadSources({
+      asset: imageAsset,
+      renderMode: "settled",
+      renderedMaxDimension: 2000,
+      intersectsRenderViewport: false,
+      isPinned: false,
+    })).toEqual(["/tmp/image-thumb.jpg"]);
+
+    expect(getCanvasImagePreloadSources({
+      asset: imageAsset,
+      renderMode: "settled",
+      renderedMaxDimension: 2000,
+      intersectsRenderViewport: true,
+      isPinned: false,
+    })).toEqual(["/tmp/image-thumb.jpg", "/tmp/image.png"]);
+
+    expect(getCanvasImagePreloadSources({
+      asset: { ...imageAsset, thumbnailPath: null },
+      renderMode: "interactive",
+      renderedMaxDimension: 2000,
+      intersectsRenderViewport: true,
+      isPinned: false,
+    })).toEqual(["/tmp/image.png"]);
   });
 });
