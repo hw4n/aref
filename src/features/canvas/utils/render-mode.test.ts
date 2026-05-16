@@ -80,9 +80,11 @@ describe("canvas render mode", () => {
     })).toBe("interactive");
   });
 
-  it("uses image thumbnails only for interactive image rendering", () => {
+  it("uses image thumbnails for interactive rendering and small settled images", () => {
     expect(shouldUseCanvasPreviewImage(imageAsset, "interactive")).toBe(true);
     expect(shouldUseCanvasPreviewImage(imageAsset, "settled")).toBe(false);
+    expect(shouldUseCanvasPreviewImage(imageAsset, "settled", 512)).toBe(true);
+    expect(shouldUseCanvasPreviewImage(imageAsset, "settled", 513)).toBe(false);
     expect(shouldUseCanvasPreviewImage({ ...imageAsset, thumbnailPath: null }, "interactive")).toBe(false);
     expect(shouldUseCanvasPreviewImage(textAsset, "interactive")).toBe(false);
   });

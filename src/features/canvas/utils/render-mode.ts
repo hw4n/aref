@@ -3,6 +3,7 @@ import { isImageAsset, type AssetItem } from "@/domain/assets/types";
 export type CanvasRenderMode = "interactive" | "settled";
 
 export const CANVAS_RENDER_SETTLE_MS = 180;
+export const CANVAS_SETTLED_PREVIEW_MAX_RENDERED_DIMENSION = 512;
 
 export interface CanvasRenderActivityState {
   isCameraRenderSettling: boolean;
@@ -20,6 +21,15 @@ export function getCanvasRenderMode(state: CanvasRenderActivityState): CanvasRen
     : "settled";
 }
 
-export function shouldUseCanvasPreviewImage(asset: AssetItem, renderMode: CanvasRenderMode) {
-  return renderMode === "interactive" && isImageAsset(asset) && Boolean(asset.thumbnailPath);
+export function shouldUseCanvasPreviewImage(
+  asset: AssetItem,
+  renderMode: CanvasRenderMode,
+  renderedMaxDimension = Number.POSITIVE_INFINITY,
+) {
+  return isImageAsset(asset)
+    && Boolean(asset.thumbnailPath)
+    && (
+      renderMode === "interactive"
+      || renderedMaxDimension <= CANVAS_SETTLED_PREVIEW_MAX_RENDERED_DIMENSION
+    );
 }

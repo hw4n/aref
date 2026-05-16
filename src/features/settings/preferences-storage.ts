@@ -1,4 +1,3 @@
-import { normalizeCanvasRenderScale } from "@/domain/canvas/render-scale";
 import type { AppUiPreferences } from "@/domain/ui/types";
 
 export const APP_UI_PREFERENCES_STORAGE_KEY = "aref.ui-preferences.v1";
@@ -17,7 +16,6 @@ export function getDefaultAppUiPreferences(): AppUiPreferences {
     leftRailOpen: true,
     inspectorOpen: true,
     gridVisible: true,
-    canvasRenderScale: 1,
     inspectorWidth: DEFAULT_INSPECTOR_WIDTH,
     generationSheetWidth: DEFAULT_GENERATION_SHEET_WIDTH,
     settingsSection: "providers",
@@ -40,7 +38,6 @@ export function normalizeAppUiPreferences(input: Partial<AppUiPreferences> | nul
     leftRailOpen: nextPreferences.leftRailOpen ?? defaults.leftRailOpen,
     inspectorOpen: nextPreferences.inspectorOpen ?? defaults.inspectorOpen,
     gridVisible: nextPreferences.gridVisible ?? defaults.gridVisible,
-    canvasRenderScale: normalizeCanvasRenderScale(nextPreferences.canvasRenderScale),
     inspectorWidth: normalizePanelWidth(nextPreferences.inspectorWidth, defaults.inspectorWidth),
     generationSheetWidth: normalizePanelWidth(nextPreferences.generationSheetWidth, defaults.generationSheetWidth),
     settingsSection:

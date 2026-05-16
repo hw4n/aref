@@ -24,7 +24,6 @@ import {
   resetCameraZoom,
   resizeViewport,
 } from "@/domain/camera/camera-math";
-import { normalizeCanvasRenderScale, type CanvasRenderScale } from "@/domain/canvas/render-scale";
 import type { GenerationRequest } from "@/domain/jobs/types";
 import {
   createQueuedGenerationJob,
@@ -137,7 +136,6 @@ export interface AppStoreState {
   toggleLeftSidebar: () => void;
   toggleInspector: () => void;
   toggleGridVisible: () => void;
-  setCanvasRenderScale: (scale: CanvasRenderScale) => void;
   setInspectorWidth: (width: number) => void;
   setGenerationSheetWidth: (width: number) => void;
   setSettingsOpen: (open: boolean) => void;
@@ -1008,14 +1006,6 @@ export function createAppStore(initialProject: Project = createEmptyProject()) {
         uiPreferences: {
           ...state.uiPreferences,
           gridVisible: !state.uiPreferences.gridVisible,
-        },
-      }));
-    },
-    setCanvasRenderScale: (scale) => {
-      set((state) => ({
-        uiPreferences: {
-          ...state.uiPreferences,
-          canvasRenderScale: normalizeCanvasRenderScale(scale),
         },
       }));
     },

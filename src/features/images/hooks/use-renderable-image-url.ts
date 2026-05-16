@@ -7,7 +7,10 @@ const MAX_RENDERABLE_IMAGE_CACHE_SIZE = 96;
 const MAX_RENDERABLE_IMAGE_URL_BYTES = 512 * 1024 * 1024;
 const MAX_RENDERABLE_IMAGE_ELEMENT_CACHE_SIZE = 64;
 const MAX_RENDERABLE_IMAGE_ELEMENT_PIXELS = 120_000_000;
+const MAX_RENDERABLE_IMAGE_ELEMENT_LOAD_CONCURRENCY = 3;
 const DEFAULT_PRELOAD_CONCURRENCY = 3;
+
+type RenderableImageLoadPriority = "visible" | "preload";
 
 interface CachedRenderableImageUrl {
   url: string;
@@ -21,12 +24,22 @@ interface CachedRenderableImageElement {
   lastUsed: number;
 }
 
+interface QueuedRenderableImageElementLoad {
+  source: string;
+  priority: RenderableImageLoadPriority;
+  load: () => Promise<HTMLImageElement | null>;
+  resolve: (image: HTMLImageElement | null) => void;
+  reject: (error: unknown) => void;
+}
+
 const renderableImageUrlCache = new Map<string, CachedRenderableImageUrl>();
 const pendingRenderableImageUrls = new Map<string, Promise<string>>();
 const renderableImageElementCache = new Map<string, CachedRenderableImageElement>();
 const pendingRenderableImageElements = new Map<string, Promise<HTMLImageElement | null>>();
+const queuedRenderableImageElementLoads: QueuedRenderableImageElementLoad[] = [];
 let renderableImageUrlCacheClock = 0;
 let renderableImageElementCacheClock = 0;
+let activeRenderableImageElementLoadCount = 0;
 
 function touchCachedRenderableImage(source: string, entry: CachedRenderableImageUrl) {
   entry.lastUsed = ++renderableImageUrlCacheClock;
@@ -115,6 +128,61 @@ function trimRenderableImageElementCache() {
   trimRenderableImageUrlCache();
 }
 
+function getNextRenderableImageElementLoadIndex() {
+  const visibleIndex = queuedRenderableImageElementLoads.findIndex(
+    (request) => request.priority === "visible",
+  );
+
+  return visibleIndex >= 0 ? visibleIndex : 0;
+}
+
+function pumpRenderableImageElementLoadQueue() {
+  while (
+    activeRenderableImageElementLoadCount < MAX_RENDERABLE_IMAGE_ELEMENT_LOAD_CONCURRENCY
+    && queuedRenderableImageElementLoads.length > 0
+  ) {
+    const requestIndex = getNextRenderableImageElementLoadIndex();
+    const request = queuedRenderableImageElementLoads.splice(requestIndex, 1)[0];
+
+    if (!request) {
+      return;
+    }
+
+    activeRenderableImageElementLoadCount += 1;
+    request.load()
+      .then(request.resolve, request.reject)
+      .finally(() => {
+        activeRenderableImageElementLoadCount -= 1;
+        pumpRenderableImageElementLoadQueue();
+      });
+  }
+}
+
+function promoteQueuedRenderableImageElementLoad(source: string) {
+  const queuedRequest = queuedRenderableImageElementLoads.find((request) => request.source === source);
+
+  if (queuedRequest) {
+    queuedRequest.priority = "visible";
+  }
+}
+
+function enqueueRenderableImageElementLoad(
+  source: string,
+  priority: RenderableImageLoadPriority,
+  load: () => Promise<HTMLImageElement | null>,
+) {
+  return new Promise<HTMLImageElement | null>((resolve, reject) => {
+    queuedRenderableImageElementLoads.push({
+      source,
+      priority,
+      load,
+      resolve,
+      reject,
+    });
+    pumpRenderableImageElementLoadQueue();
+  });
+}
+
 async function createRenderableImageUrl(source: string) {
   if (hasTauriRuntime() && isLikelyFilePath(source)) {
     const bytes = await readManagedImageBytes(source);
@@ -184,7 +252,10 @@ export function getCachedRenderableImageElement(source: string) {
   return cached.image;
 }
 
-export async function loadRenderableImageElement(source: string) {
+export async function loadRenderableImageElement(
+  source: string,
+  options: { priority?: RenderableImageLoadPriority } = {},
+) {
   if (!source || typeof window === "undefined") {
     return null;
   }
@@ -198,10 +269,15 @@ export async function loadRenderableImageElement(source: string) {
   const pending = pendingRenderableImageElements.get(source);
 
   if (pending) {
+    if (options.priority === "visible") {
+      promoteQueuedRenderableImageElementLoad(source);
+    }
+
     return pending;
   }
 
-  const pendingImage = (async () => {
+  const priority = options.priority ?? "visible";
+  const pendingImage = enqueueRenderableImageElementLoad(source, priority, async () => {
     let url = source;
 
     try {
@@ -218,6 +294,7 @@ export async function loadRenderableImageElement(source: string) {
       const image = new window.Image();
 
       image.crossOrigin = "anonymous";
+      image.decoding = "async";
       image.onload = () => {
         touchCachedRenderableImageElement(source, {
           image,
@@ -229,7 +306,7 @@ export async function loadRenderableImageElement(source: string) {
       image.onerror = () => resolve(null);
       image.src = url;
     });
-  })().finally(() => {
+  }).finally(() => {
     pendingRenderableImageElements.delete(source);
   });
 
@@ -240,7 +317,7 @@ export async function loadRenderableImageElement(source: string) {
 
 export async function preloadRenderableImage(source: string) {
   try {
-    await loadRenderableImageElement(source);
+    await loadRenderableImageElement(source, { priority: "preload" });
   } catch {
     // Preloading is a best-effort optimization; visible rendering still falls back normally.
   }

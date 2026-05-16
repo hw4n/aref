@@ -1246,8 +1246,7 @@ fn write_project_file_to_path(
         }
     }
 
-    let contents =
-        serde_json::to_vec_pretty(&persisted_project).map_err(|error| error.to_string())?;
+    let contents = serde_json::to_vec(&persisted_project).map_err(|error| error.to_string())?;
     write_bytes_to_archive(
         &mut archive,
         PROJECT_ARCHIVE_METADATA_ENTRY,
@@ -1322,8 +1321,7 @@ fn write_autosave_project_to_path(
     ensure_parent_directory(project_path)?;
     let persisted_project =
         persisted_project_file(project, persisted_assets_from_runtime_paths(project));
-    let contents =
-        serde_json::to_vec_pretty(&persisted_project).map_err(|error| error.to_string())?;
+    let contents = serde_json::to_vec(&persisted_project).map_err(|error| error.to_string())?;
     fs::write(project_path, contents).map_err(|error| error.to_string())
 }
 
@@ -1908,6 +1906,10 @@ mod tests {
 
         write_autosave_project_to_path(&autosave_path, &project).expect("write autosave json");
         let contents = fs::read_to_string(&autosave_path).expect("read autosave json");
+        assert!(
+            !contents.contains('\n'),
+            "autosave should use compact json to reduce background write cost"
+        );
         let value: serde_json::Value =
             serde_json::from_str(&contents).expect("autosave should be json");
 

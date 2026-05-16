@@ -574,8 +574,7 @@ button:disabled {
   z-index: 3;
 }
 
-.canvas-statusbar__item,
-.canvas-statusbar__select {
+.canvas-statusbar__item {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -590,18 +589,7 @@ button:disabled {
   font-weight: 700;
 }
 
-.canvas-statusbar__select {
-  width: auto;
-  min-width: 104px;
-  padding-right: 1.7rem;
-}
-
-.canvas-statusbar__scale {
-  display: inline-flex;
-}
-
-.canvas-statusbar__item:hover,
-.canvas-statusbar__select:hover {
+.canvas-statusbar__item:hover {
   border-color: rgba(125, 161, 236, 0.55);
   color: var(--text);
 }

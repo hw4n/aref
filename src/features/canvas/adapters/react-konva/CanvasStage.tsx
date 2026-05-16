@@ -22,11 +22,6 @@ import {
   type TextAssetItem,
 } from "@/domain/assets/types";
 import type { CameraState } from "@/domain/camera/types";
-import {
-  CANVAS_RENDER_SCALES,
-  getCanvasPixelRatio,
-  normalizeCanvasRenderScale,
-} from "@/domain/canvas/render-scale";
 import { screenToWorld } from "@/domain/camera/camera-math";
 import {
   computeGenerationCanvasLayout,
@@ -78,6 +73,8 @@ interface AssetLayerItemProps {
   isSelected: boolean;
   isPanMode: boolean;
   renderMode: CanvasRenderMode;
+  cameraZoom: number;
+  canvasPixelRatio: number;
   onSelect: (assetId: string, additive: boolean) => void;
   onEditText: (assetId: string) => void;
   onContextMenu: (assetId: string, clientPosition: Point, isSelected: boolean, additive: boolean) => void;
@@ -131,6 +128,20 @@ function getAssetThumbnailSource(asset: AssetItem) {
   }
 
   return asset.thumbnailPath ?? (isLikelyFilePath(asset.imagePath) ? null : asset.imagePath);
+}
+
+function getAssetRenderedMaxDimension(asset: AssetItem, cameraZoom: number, canvasPixelRatio: number) {
+  return Math.max(asset.width * asset.scale, asset.height * asset.scale) * cameraZoom * canvasPixelRatio;
+}
+
+function getCanvasDevicePixelRatio() {
+  if (typeof window === "undefined") {
+    return 1;
+  }
+
+  return Number.isFinite(window.devicePixelRatio) && window.devicePixelRatio > 0
+    ? window.devicePixelRatio
+    : 1;
 }
 
 function getRectsBounds(rects: CanvasRect[]): CanvasRect | null {
@@ -558,11 +569,13 @@ function GenerationJobPlaceholderItem({
   );
 }
 
-function AssetLayerItem({
+function AssetLayerItemComponent({
   asset,
   isSelected,
   isPanMode,
   renderMode,
+  cameraZoom,
+  canvasPixelRatio,
   onSelect,
   onEditText,
   onContextMenu,
@@ -574,7 +587,8 @@ function AssetLayerItem({
   isEditing,
 }: AssetLayerItemProps) {
   const isText = isTextAsset(asset);
-  const shouldUsePreviewImage = shouldUseCanvasPreviewImage(asset, renderMode);
+  const renderedMaxDimension = getAssetRenderedMaxDimension(asset, cameraZoom, canvasPixelRatio);
+  const shouldUsePreviewImage = shouldUseCanvasPreviewImage(asset, renderMode, renderedMaxDimension);
   const fullImage = useHtmlImage(isText || shouldUsePreviewImage ? null : asset.imagePath);
   const previewImage = useHtmlImage(!isText && asset.thumbnailPath ? asset.thumbnailPath : null);
   const image = shouldUsePreviewImage ? previewImage ?? fullImage : fullImage ?? previewImage;
@@ -758,6 +772,18 @@ function AssetLayerItem({
   );
 }
 
+const AssetLayerItem = memo(
+  AssetLayerItemComponent,
+  (previous, next) =>
+    previous.asset === next.asset
+    && previous.isSelected === next.isSelected
+    && previous.isPanMode === next.isPanMode
+    && previous.renderMode === next.renderMode
+    && previous.cameraZoom === next.cameraZoom
+    && previous.canvasPixelRatio === next.canvasPixelRatio
+    && previous.isEditing === next.isEditing,
+);
+
 function TextEditOverlay({
   asset,
   camera,
@@ -907,8 +933,6 @@ function CanvasStageComponent({ onCancelGeneration }: CanvasStageProps = {}) {
   const redoVisibilityChange = useAppStore((state) => state.redoVisibilityChange);
   const zoomCameraAtPoint = useAppStore((state) => state.zoomCameraAtPoint);
   const gridVisible = useAppStore((state) => state.uiPreferences.gridVisible);
-  const canvasRenderScale = useAppStore((state) => state.uiPreferences.canvasRenderScale);
-  const setCanvasRenderScale = useAppStore((state) => state.setCanvasRenderScale);
   const isSpacePressed = useAppStore((state) => state.isSpacePressed);
   const pushToast = useAppStore((state) => state.pushToast);
 
@@ -1071,6 +1095,7 @@ function CanvasStageComponent({ onCancelGeneration }: CanvasStageProps = {}) {
     isPanning,
     hasMarqueeSession: Boolean(marqueeSession),
   });
+  const canvasPixelRatio = getCanvasDevicePixelRatio();
   const renderViewport = useMemo(
     () => getCameraOverscanViewport(camera, CANVAS_RENDER_OVERSCAN_SCREENS),
     [camera.x, camera.y, camera.zoom, camera.viewportHeight, camera.viewportWidth],
@@ -1134,13 +1159,16 @@ function CanvasStageComponent({ onCancelGeneration }: CanvasStageProps = {}) {
         sources.add(asset.thumbnailPath);
       }
 
-      if (renderMode === "settled" || assetIntersectsViewport(asset, renderViewport)) {
+      const renderedMaxDimension = getAssetRenderedMaxDimension(asset, camera.zoom, canvasPixelRatio);
+      const shouldUsePreviewImage = shouldUseCanvasPreviewImage(asset, renderMode, renderedMaxDimension);
+
+      if (!shouldUsePreviewImage && (renderMode === "settled" || assetIntersectsViewport(asset, renderViewport))) {
         sources.add(asset.imagePath);
       }
     }
 
     return [...sources];
-  }, [assets, preloadViewport, renderMode, renderViewport]);
+  }, [assets, camera.zoom, canvasPixelRatio, preloadViewport, renderMode, renderViewport]);
   const visibleAssetNodeKey = useMemo(
     () =>
       renderAssets
@@ -1163,8 +1191,6 @@ function CanvasStageComponent({ onCancelGeneration }: CanvasStageProps = {}) {
     [renderAssets],
   );
   const zoomLabel = `${Math.round(camera.zoom * 100)}%`;
-  const renderScaleLabel = `${Math.round(canvasRenderScale * 100)}%`;
-  const canvasPixelRatio = getCanvasPixelRatio(canvasRenderScale);
   const hasLockedSelection = selectedAssetIds.some((assetId) => assetMap[assetId]?.locked);
   const isPanInteractionMode = isPanning || isSpacePressed || Boolean(marqueeSession);
   const panelClassName = gridVisible ? "canvas-panel" : "canvas-panel canvas-panel--grid-hidden";
@@ -1270,21 +1296,6 @@ function CanvasStageComponent({ onCancelGeneration }: CanvasStageProps = {}) {
   useEffect(() => {
     generationJobMapRef.current = generationJobMap;
   }, [generationJobMap]);
-
-  useEffect(() => {
-    Konva.pixelRatio = canvasPixelRatio;
-
-    const stage = stageRef.current;
-    if (!stage) {
-      return;
-    }
-
-    stage.bufferCanvas.setPixelRatio(canvasPixelRatio);
-    for (const layer of stage.getLayers()) {
-      layer.getCanvas().setPixelRatio(canvasPixelRatio);
-      layer.batchDraw();
-    }
-  }, [canvasPixelRatio, size.height, size.width]);
 
   useEffect(() => {
     setSelectedGenerationJobIds((currentIds) => {
@@ -2004,6 +2015,8 @@ function CanvasStageComponent({ onCancelGeneration }: CanvasStageProps = {}) {
                     isEditing={editingTextAssetId === asset.id}
                     isPanMode={isPanInteractionMode}
                     renderMode={renderMode}
+                    cameraZoom={camera.zoom}
+                    canvasPixelRatio={canvasPixelRatio}
                     onContextMenu={handleAssetContextMenu}
                     onEditText={beginTextEditing}
                     onInteractionActiveChange={setCanvasInteractionPreviewActive}
@@ -2213,21 +2226,6 @@ function CanvasStageComponent({ onCancelGeneration }: CanvasStageProps = {}) {
         <button className="canvas-statusbar__item" onClick={resetZoom} title="Reset Zoom">
           {zoomLabel}
         </button>
-        <label className="canvas-statusbar__scale" title={`Canvas render scale: ${renderScaleLabel}`}>
-          <span className="sr-only">Canvas render scale</span>
-          <select
-            aria-label="Canvas render scale"
-            className="canvas-statusbar__select"
-            value={canvasRenderScale}
-            onChange={(event) => setCanvasRenderScale(normalizeCanvasRenderScale(Number(event.currentTarget.value)))}
-          >
-            {CANVAS_RENDER_SCALES.map((scale) => (
-              <option key={scale} value={scale}>
-                {`Render ${Math.round(scale * 100)}%`}
-              </option>
-            ))}
-          </select>
-        </label>
       </div>
     </div>
   );

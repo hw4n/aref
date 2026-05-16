@@ -251,14 +251,6 @@ describe("app store", () => {
     expect(store.getState().uiPreferences.logsVisible).toBe(false);
   });
 
-  it("stores the selected canvas render scale", () => {
-    const store = createAppStore();
-
-    store.getState().setCanvasRenderScale(0.5);
-
-    expect(store.getState().uiPreferences.canvasRenderScale).toBe(0.5);
-  });
-
   it("groups and ungroups a multi-selection", () => {
     const store = createSeededStore();
 

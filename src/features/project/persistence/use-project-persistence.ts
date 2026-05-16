@@ -14,8 +14,10 @@ import {
 } from "./project-io";
 import { hasTauriRuntime } from "./tauri-runtime";
 import type { RecentProjectRecord } from "./types";
-
-const AUTOSAVE_DEBOUNCE_MS = 3000;
+import {
+  AUTOSAVE_ACTIVITY_SIGNAL_THROTTLE_MS,
+  getAutosaveDelayMs,
+} from "./autosave-policy";
 
 type PersistenceStatus = "idle" | "loading" | "saving" | "saved" | "modified" | "error";
 
@@ -32,7 +34,10 @@ export function useProjectPersistence() {
   const [status, setStatus] = useState<PersistenceStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const [isReady, setIsReady] = useState(false);
+  const [activitySignal, setActivitySignal] = useState(0);
   const lastAutosavedFingerprintRef = useRef<string | null>(null);
+  const lastUserActivityAtRef = useRef(Date.now());
+  const lastActivitySignalAtRef = useRef(0);
   const autosaveProjectSnapshotRef = useRef(project);
   const autosaveSnapshotFingerprintRef = useRef<string | null>(null);
   const projectRef = useRef(project);
@@ -58,6 +63,58 @@ export function useProjectPersistence() {
     autosaveSnapshotFingerprintRef.current = projectFingerprint;
     autosaveProjectSnapshotRef.current = project;
   }, [project, projectFingerprint]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return undefined;
+    }
+
+    const pushActivitySignal = (now: number, force = false) => {
+      if (!force && now - lastActivitySignalAtRef.current < AUTOSAVE_ACTIVITY_SIGNAL_THROTTLE_MS) {
+        return;
+      }
+
+      lastActivitySignalAtRef.current = now;
+      setActivitySignal((current) => (current + 1) % Number.MAX_SAFE_INTEGER);
+    };
+    const recordUserActivity = () => {
+      const now = Date.now();
+      lastUserActivityAtRef.current = now;
+      if (appStore.getState().isCanvasInteractionActive) {
+        return;
+      }
+
+      pushActivitySignal(now);
+    };
+    const recordVisibilityChange = () => {
+      const now = Date.now();
+
+      if (document.hidden) {
+        pushActivitySignal(now, true);
+        return;
+      }
+
+      lastUserActivityAtRef.current = now;
+      pushActivitySignal(now, true);
+    };
+    const options: AddEventListenerOptions = {
+      capture: true,
+      passive: true,
+    };
+    const activityEvents = ["keydown", "pointerdown", "pointermove", "touchstart", "wheel"] as const;
+
+    for (const eventName of activityEvents) {
+      window.addEventListener(eventName, recordUserActivity, options);
+    }
+    document.addEventListener("visibilitychange", recordVisibilityChange);
+
+    return () => {
+      for (const eventName of activityEvents) {
+        window.removeEventListener(eventName, recordUserActivity, options);
+      }
+      document.removeEventListener("visibilitychange", recordVisibilityChange);
+    };
+  }, []);
 
   const refreshRecentProjects = useCallback(async () => {
     if (!hasTauriRuntime()) {
@@ -301,9 +358,14 @@ export function useProjectPersistence() {
       return undefined;
     }
 
-    const autosaveProject = autosaveProjectSnapshotRef.current;
-    const autosaveFingerprint = projectFingerprint;
+    const delayMs = getAutosaveDelayMs({
+      isDocumentHidden: typeof document !== "undefined" ? document.hidden : false,
+      lastUserActivityAt: lastUserActivityAtRef.current,
+      now: Date.now(),
+    });
     const timeoutId = window.setTimeout(async () => {
+      const autosaveFingerprint = autosaveSnapshotFingerprintRef.current ?? projectFingerprint;
+
       if (autosaveFingerprint === lastAutosavedFingerprintRef.current) {
         return;
       }
@@ -312,11 +374,36 @@ export function useProjectPersistence() {
         return;
       }
 
-      await saveAutosaveSnapshot(autosaveProject, currentProjectPath, autosaveFingerprint);
-    }, AUTOSAVE_DEBOUNCE_MS);
+      const isDocumentHidden = typeof document !== "undefined" ? document.hidden : false;
+      const remainingDelayMs = isDocumentHidden
+        ? 0
+        : getAutosaveDelayMs({
+            isDocumentHidden,
+            lastUserActivityAt: lastUserActivityAtRef.current,
+            now: Date.now(),
+          });
+
+      if (remainingDelayMs > 0) {
+        setActivitySignal((current) => (current + 1) % Number.MAX_SAFE_INTEGER);
+        return;
+      }
+
+      await saveAutosaveSnapshot(
+        autosaveProjectSnapshotRef.current,
+        currentProjectPath,
+        autosaveFingerprint,
+      );
+    }, delayMs);
 
     return () => window.clearTimeout(timeoutId);
-  }, [currentProjectPath, isCanvasInteractionActive, isReady, projectFingerprint, saveAutosaveSnapshot]);
+  }, [
+    activitySignal,
+    currentProjectPath,
+    isCanvasInteractionActive,
+    isReady,
+    projectFingerprint,
+    saveAutosaveSnapshot,
+  ]);
 
   const effectiveStatus = useMemo<PersistenceStatus>(() => {
     if (
